@@ -1,0 +1,150 @@
+{
+  "accounts": {
+    "AC-2001": {
+      "account_id": "AC-2001",
+      "balance": 0.0,
+      "customer_id": "CUST-1",
+      "dormant_on": "2026-07-15",
+      "jurisdiction": "IN-RBI-DEA",
+      "last_customer_activity": "2016-07-01",
+      "outreach_sent": true,
+      "status": "TRANSFERRED",
+      "transfer_due_on": "2026-07-15",
+      "transferred_amount": 15250.0
+    },
+    "AC-2002": {
+      "account_id": "AC-2002",
+      "balance": 800.0,
+      "customer_id": "CUST-2",
+      "dormant_on": null,
+      "jurisdiction": "IN-RBI-DEA",
+      "last_customer_activity": "2016-08-01",
+      "outreach_sent": true,
+      "status": "OUTREACH",
+      "transfer_due_on": null,
+      "transferred_amount": 0.0
+    }
+  },
+  "approvals": {
+    "APR-0001": {
+      "approval_id": "APR-0001",
+      "decision_by": "credit.manager",
+      "decision_note": "",
+      "entity_id": "LN-1002",
+      "kind": "LOAN_DEVIATION",
+      "package": {
+        "declared_income": 1000000,
+        "diagnosis": "Income variance exceeds tolerance",
+        "verified_income": 780000
+      },
+      "required_role": "credit.manager",
+      "status": "APPROVED"
+    },
+    "APR-0002": {
+      "approval_id": "APR-0002",
+      "decision_by": "compliance.officer",
+      "decision_note": "",
+      "entity_id": "AC-2001",
+      "kind": "UNCLAIMED_TRANSFER",
+      "package": {
+        "balance": 15250.0,
+        "due_on": "2026-07-15",
+        "jurisdiction": "IN-RBI-DEA"
+      },
+      "required_role": "compliance.officer",
+      "status": "APPROVED"
+    },
+    "APR-0003": {
+      "approval_id": "APR-0003",
+      "decision_by": null,
+      "decision_note": null,
+      "entity_id": "34349873",
+      "kind": "LOAN_DEVIATION",
+      "package": {
+        "declared_income": 47.0,
+        "diagnosis": "Income variance exceeds tolerance",
+        "verified_income": 34.0
+      },
+      "required_role": "credit.manager",
+      "status": "PENDING"
+    }
+  },
+  "loans": {
+    "34349873": {
+      "application_id": "34349873",
+      "correlation_id": "",
+      "declared_income": 47.0,
+      "diagnosis": "Income variance exceeds policy; routed to credit.manager.",
+      "documents": [
+        "adadawda"
+      ],
+      "exception_code": "INCOME_VARIANCE",
+      "relationship_manager": "",
+      "requested_documents": [
+        "adedwdw"
+      ],
+      "status": "AWAITING_APPROVAL",
+      "verification_attempts": 0,
+      "verified_income": 34.0
+    },
+    "LN-1001": {
+      "application_id": "LN-1001",
+      "correlation_id": "",
+      "declared_income": 0.0,
+      "diagnosis": "Missing documents: BANK_STATEMENT",
+      "documents": [
+        "PAN"
+      ],
+      "exception_code": "MISSING_DOCUMENT",
+      "relationship_manager": "rm-1",
+      "requested_documents": [
+        "PAN",
+        "BANK_STATEMENT"
+      ],
+      "status": "AWAITING_CUSTOMER",
+      "verification_attempts": 0,
+      "verified_income": 0.0
+    },
+    "LN-1002": {
+      "application_id": "LN-1002",
+      "correlation_id": "",
+      "declared_income": 1000000,
+      "diagnosis": "Credit deviation approved; returned to main journey.",
+      "documents": [],
+      "exception_code": "INCOME_VARIANCE",
+      "relationship_manager": "rm-2",
+      "requested_documents": [],
+      "status": "READY_FOR_MAIN_JOURNEY",
+      "verification_attempts": 0,
+      "verified_income": 780000
+    },
+    "LN-1003": {
+      "application_id": "LN-1003",
+      "correlation_id": "",
+      "declared_income": 0.0,
+      "diagnosis": "Verification still unavailable; customer confirmation requested.",
+      "documents": [],
+      "exception_code": "VERIFY_TRANSIENT_FAILURE",
+      "relationship_manager": "rm-3",
+      "requested_documents": [],
+      "status": "AWAITING_CUSTOMER",
+      "verification_attempts": 1,
+      "verified_income": 0.0
+    },
+    "wqedqfewf": {
+      "application_id": "wqedqfewf",
+      "correlation_id": "",
+      "declared_income": 0.0,
+      "diagnosis": "Document verification incomplete: PAN, AADHAAR, ADDRESS_PROOF, BANK_STATEMENT, INCOME_PROOF",
+      "document_evidence": {},
+      "documents": [],
+      "exception_code": "MISSING_DOCUMENT",
+      "loan_product": "PERSONAL",
+      "relationship_manager": "customer-self-service",
+      "requested_documents": [],
+      "status": "AWAITING_CUSTOMER",
+      "verification_attempts": 0,
+      "verified_income": 0.0
+    }
+  }
+}

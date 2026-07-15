@@ -1,0 +1,7 @@
+# Optional local document-AI runtime. Review security, model licensing, data
+# residency, hardware capacity, and customer consent before installation.
+torch>=2.6
+transformers>=4.51
+accelerate>=1.3
+Pillow>=10.0
+huggingface_hub>=0.28
