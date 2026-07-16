@@ -1,5 +1,9 @@
 """Pluggable AI pipeline for loan-document verification.
 
+Feature connection: this module supports the optional AI-assisted document
+review experience for loan applications. It is not the database layer; it
+returns analysis results that the workflow can persist and review.
+
 The baseline provider is intentionally non-decisive. Deploy an approved model
 provider behind this interface before using document AI in a lending decision.
 """

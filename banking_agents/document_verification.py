@@ -1,5 +1,9 @@
 """Explainable document completeness and status validation for loan applications.
 
+Feature connection: this is the document-verification engine behind the loan
+review and approval flow. It checks whether incoming evidence satisfies the
+product-based document requirements before the loan can proceed.
+
 This is a rules model. Production verification should combine it with approved
 OCR, document-authenticity, KYC, and fraud-screening integrations.
 """

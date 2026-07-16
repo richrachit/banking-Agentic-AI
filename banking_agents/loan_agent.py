@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Loan exception and review workflow engine.
+
+This module connects the loan UI, the document verification rules, and the
+repository so loan applications can be processed, rejected, approved, or reopened.
+"""
+
 from pathlib import Path
 
 from .audit import AuditLog
@@ -40,6 +46,42 @@ class LoanExceptionAgent:
             loan.diagnosis = "Credit deviation approved; returned to main journey."
             self.repository.save_loan(loan)
             self.audit.write("loan-agent", "loan.returned_to_journey", application_id, "SUCCESS", {"approval_id": approved[0].approval_id})
+        return loan
+
+    def approve_application(self, application_id: str, reason: str) -> LoanApplication:
+        loan = self.repository.get_loan(application_id)
+        loan.status = LoanStatus.READY_FOR_MAIN_JOURNEY.value
+        loan.diagnosis = f"Application approved by operations: {reason}"
+        self.repository.save_loan(loan)
+        self.audit.write("loan-agent", "loan.approved", application_id, "APPROVED", {"reason": reason})
+        return loan
+
+    def approve_application(self, application_id: str, reason: str) -> LoanApplication:
+        # Feature: direct approve action from the dashboard review queue.
+        # Database connection: updates the loan status in data/state.json.
+        loan = self.repository.get_loan(application_id)
+        loan.status = LoanStatus.READY_FOR_MAIN_JOURNEY.value
+        loan.diagnosis = f"Application approved by operations: {reason}"
+        self.repository.save_loan(loan)
+        self.audit.write("loan-agent", "loan.approved", application_id, "APPROVED", {"reason": reason})
+        return loan
+
+    def reject_application(self, application_id: str, reason: str) -> LoanApplication:
+        # Feature: AI or operations rejection for loans that need rework.
+        # Database connection: updates the loan status and audit trail in storage.
+        loan = self.repository.get_loan(application_id)
+        loan.status = LoanStatus.REJECTED.value
+        loan.diagnosis = f"Application rejected by AI agent: {reason}"
+        self.repository.save_loan(loan)
+        self.audit.write("loan-agent", "loan.rejected", application_id, "REJECTED", {"reason": reason})
+        return loan
+
+    def reopen_application(self, application_id: str, reason: str) -> LoanApplication:
+        loan = self.repository.get_loan(application_id)
+        loan.status = LoanStatus.REOPENED.value
+        loan.diagnosis = f"Application reopened for review: {reason}"
+        self.repository.save_loan(loan)
+        self.audit.write("loan-agent", "loan.reopened", application_id, "REOPENED", {"reason": reason})
         return loan
 
     def _resolve_missing_document(self, loan: LoanApplication) -> LoanApplication:

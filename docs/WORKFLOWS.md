@@ -17,7 +17,7 @@ This document reflects the current local demo implementation in the repository, 
 
 ## 2. Current loan state machine
 
-`HELD -> AWAITING_CUSTOMER -> AWAITING_APPROVAL -> READY_FOR_MAIN_JOURNEY`
+`HELD -> AWAITING_CUSTOMER -> AWAITING_APPROVAL -> READY_FOR_MAIN_JOURNEY -> REJECTED/REOPENED`
 
 ### What happens in each state
 
@@ -25,6 +25,8 @@ This document reflects the current local demo implementation in the repository, 
 - `AWAITING_CUSTOMER`: used when the agent needs more evidence or a customer response.
 - `AWAITING_APPROVAL`: used when a policy deviation needs a credit decision.
 - `READY_FOR_MAIN_JOURNEY`: used after successful resolution or after an approved deviation.
+- `REJECTED`: used when an application is rejected by AI or operations review.
+- `REOPENED`: used when a rejected or stalled application is reopened for resubmission or re-review.
 
 ### Current exception handling
 
@@ -33,6 +35,7 @@ This document reflects the current local demo implementation in the repository, 
 | `MISSING_DOCUMENT` | Verifies required documents for the product and requests any missing or invalid items. |
 | `VERIFY_TRANSIENT_FAILURE` | Retries verification; if the second attempt succeeds, the loan is released. |
 | `INCOME_VARIANCE` | Resolves automatically when within policy tolerance; otherwise creates a credit approval package. |
+| Review action | Approve, reject, or reopen the loan directly from the dashboard queue. |
 
 ## 3. Current dormancy lifecycle
 

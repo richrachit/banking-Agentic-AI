@@ -4,6 +4,17 @@
 
 The repository currently implements a local, browser-driven banking workflow reference. It combines a lightweight web application, domain models, policy-driven agents, an append-only audit log, and a JSON-backed repository.
 
+## Feature-to-file map
+
+| Feature | Primary module(s) | Persistence connection |
+| --- | --- | --- |
+| Role-based browser login and dashboard | `banking_agents/web_app.py` | Reads and writes via `banking_agents/repository.py` and `banking_agents/audit.py` |
+| Customer loan submission | `banking_agents/web_app.py`, `banking_agents/loan_agent.py` | Writes loan records to `data/state.json` |
+| Document verification and review | `banking_agents/document_verification.py`, `banking_agents/document_ai.py` | Evidence is carried through the loan record and persisted with the loan |
+| Loan approval / rejection / reopen | `banking_agents/web_app.py`, `banking_agents/loan_agent.py` | Updates loan status in `data/state.json` and records audit events in `data/audit.jsonl` |
+| Dormancy lifecycle and transfer approvals | `banking_agents/dormancy_agent.py` | Updates account state and approval records in `data/state.json` |
+| Automation supervisor | `banking_agents/automation_agent.py` | Uses repository and audit outputs to drive the workflow |
+
 ### Components
 
 | Layer | Responsibility | Local implementation |

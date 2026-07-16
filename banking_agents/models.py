@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Core domain models for loans, accounts, approvals, and workflow state.
+
+These models define the business objects that are passed between the web app,
+the agents, and the repository persistence layer.
+"""
+
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from enum import Enum
@@ -11,6 +17,8 @@ class LoanStatus(str, Enum):
     AWAITING_CUSTOMER = "AWAITING_CUSTOMER"
     AWAITING_APPROVAL = "AWAITING_APPROVAL"
     READY_FOR_MAIN_JOURNEY = "READY_FOR_MAIN_JOURNEY"
+    REJECTED = "REJECTED"
+    REOPENED = "REOPENED"
 
 
 class DormancyStatus(str, Enum):

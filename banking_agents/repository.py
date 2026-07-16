@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Local persistence layer for the banking workflow demo.
+
+This module is the main data access boundary for the application. It writes
+and reads workflow state from data/state.json and is therefore the primary
+connection point between the UI/agents and the local database-like storage.
+"""
+
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +45,8 @@ class LocalRepository:
         return [LoanApplication(**record) for record in self._read()["loans"].values()]
 
     def save_loan(self, loan: LoanApplication) -> None:
+        # Feature: loan submission and loan review updates are persisted here.
+        # Database connection: writes the loan record into data/state.json.
         state = self._read(); state["loans"][loan.application_id] = to_record(loan); self._write(state)
 
     def get_account(self, account_id: str) -> Account:
@@ -50,6 +59,8 @@ class LocalRepository:
         state = self._read(); state["accounts"][account.account_id] = to_record(account); self._write(state)
 
     def create_approval(self, approval: Approval) -> Approval:
+        # Feature: approval routing for loan deviations and transfer/claim actions.
+        # Database connection: stores approval records in data/state.json.
         state = self._read()
         for record in state["approvals"].values():
             if record["kind"] == approval.kind and record["entity_id"] == approval.entity_id and record["status"] == "PENDING":

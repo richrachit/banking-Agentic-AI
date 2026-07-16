@@ -11,6 +11,16 @@ A local, dependency-free reference implementation for two bank-operations agents
 
 The CLI persists its state to `data/state.json` and emits an append-only audit log to `data/audit.jsonl`. It uses deterministic policy rules and deliberately keeps money movement and policy deviations behind a human approval gate.
 
+### Code-to-feature map
+
+- `banking_agents/web_app.py` — browser UI, role-based login, loan review dashboard, approve/reject/reopen actions, and application detail view.
+- `banking_agents/loan_agent.py` — loan exception processing, document review routing, approval handling, and loan reopen/reject workflow.
+- `banking_agents/dormancy_agent.py` — dormant-account lifecycle, transfer approvals, and claim handling.
+- `banking_agents/repository.py` — local persistence layer for loans, accounts, approvals, and workflow state.
+- `banking_agents/audit.py` — append-only audit trail for all workflow decisions.
+- `banking_agents/document_verification.py` — explainable document-rule engine for product-specific document checks.
+- `banking_agents/document_ai.py` — optional AI-powered document triage pipeline.
+
 ```text
 Input adapters -> Detect/classify -> Diagnose -> Resolve / seek evidence
                                        |                 |

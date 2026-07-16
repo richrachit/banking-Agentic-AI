@@ -4,12 +4,12 @@
       "account_id": "AC-2001",
       "balance": 15250.0,
       "customer_id": "CUST-1",
-      "dormant_on": "2026-07-15",
+      "dormant_on": "2026-07-17",
       "jurisdiction": "IN-RBI-DEA",
       "last_customer_activity": "2016-07-01",
       "outreach_sent": true,
       "status": "TRANSFER_PENDING",
-      "transfer_due_on": "2026-07-15",
+      "transfer_due_on": "2026-07-17",
       "transferred_amount": 0.0
     },
     "AC-2002": {
@@ -48,10 +48,24 @@
       "kind": "UNCLAIMED_TRANSFER",
       "package": {
         "balance": 15250.0,
-        "due_on": "2026-07-15",
+        "due_on": "2026-07-17",
         "jurisdiction": "IN-RBI-DEA"
       },
       "required_role": "compliance.officer",
+      "status": "PENDING"
+    },
+    "APR-0003": {
+      "approval_id": "APR-0003",
+      "decision_by": null,
+      "decision_note": null,
+      "entity_id": "LN-20260716-0001",
+      "kind": "LOAN_DEVIATION",
+      "package": {
+        "declared_income": 0.0,
+        "diagnosis": "Income variance exceeds tolerance",
+        "verified_income": 0.0
+      },
+      "required_role": "credit.manager",
       "status": "PENDING"
     }
   },
@@ -137,6 +151,32 @@
       "status": "AWAITING_CUSTOMER",
       "tenure_months": 0,
       "verification_attempts": 1,
+      "verified_income": 0.0
+    },
+    "LN-20260716-0001": {
+      "applicant_name": "",
+      "application_id": "LN-20260716-0001",
+      "correlation_id": "",
+      "date_of_birth": "",
+      "declared_income": 0.0,
+      "diagnosis": "Income variance exceeds policy; routed to credit.manager.",
+      "document_evidence": {},
+      "documents": [],
+      "email": "",
+      "employer_name": "",
+      "employment_type": "",
+      "exception_code": "INCOME_VARIANCE",
+      "loan_product": "PERSONAL",
+      "loan_purpose": "",
+      "monthly_income": 0.0,
+      "phone": "",
+      "relationship_manager": "",
+      "requested_amount": 0.0,
+      "requested_documents": [],
+      "residential_address": "",
+      "status": "AWAITING_APPROVAL",
+      "tenure_months": 0,
+      "verification_attempts": 0,
       "verified_income": 0.0
     }
   }

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Dormancy and escheatment workflow engine.
+
+This module connects account lifecycle processing, approval creation, and the
+persisted case database for dormant-account reviews.
+"""
+
 from datetime import date, timedelta
 from pathlib import Path
 

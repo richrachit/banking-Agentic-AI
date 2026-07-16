@@ -1,4 +1,8 @@
-"""Autonomous supervisor that delegates to constrained banking workflow agents."""
+"""Autonomous supervisor that delegates to constrained banking workflow agents.
+
+Feature connection: this orchestrates the loan and dormancy workflows from the
+UI and persists the resulting actions through the repository and audit log.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

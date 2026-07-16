@@ -9,7 +9,7 @@ from banking_agents.dormancy_agent import DormancyAgent
 from banking_agents.document_verification import DocumentVerificationModel
 from banking_agents.document_ai import BaselineDocumentAIProvider
 from banking_agents.loan_agent import LoanExceptionAgent
-from banking_agents.models import Account, LoanApplication
+from banking_agents.models import Account, Approval, LoanApplication, LoanStatus
 from banking_agents.policy import PolicyConfig
 from banking_agents.repository import LocalRepository
 
@@ -37,6 +37,23 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(agent.request_claim("A1", "C-1", True).status, "CLAIM_PENDING")
         claim_approval = self.repo.list_approvals()[1]; claim_approval.status = "APPROVED"; self.repo.save_approval(claim_approval)
         self.assertEqual(agent.execute_approved_claims()[0].status, "CLAIM_PAID")
+
+    def test_rejected_loan_can_be_reopened(self):
+        self.repo.seed([LoanApplication("L3", "INCOME_VARIANCE", declared_income=100, verified_income=70, status=LoanStatus.AWAITING_APPROVAL.value)], [])
+        agent = LoanExceptionAgent(self.repo, self.audit, self.policy)
+        self.repo.create_approval(Approval("APR-0001", "LOAN_DEVIATION", "L3", "credit.manager", {"declared_income": 100, "verified_income": 70}))
+        agent.reject_application("L3", "AI rejected due to missing evidence")
+        self.assertEqual(self.repo.get_loan("L3").status, LoanStatus.REJECTED.value)
+        agent.reopen_application("L3", "Customer resubmitted documents")
+        reopened = self.repo.get_loan("L3")
+        self.assertEqual(reopened.status, LoanStatus.AWAITING_CUSTOMER.value)
+        self.assertIn("reopened", reopened.diagnosis.lower())
+
+    def test_approved_loan_can_be_returned_to_main_journey(self):
+        self.repo.seed([LoanApplication("L4", "INCOME_VARIANCE", declared_income=100, verified_income=70, status=LoanStatus.AWAITING_APPROVAL.value)], [])
+        agent = LoanExceptionAgent(self.repo, self.audit, self.policy)
+        agent.approve_application("L4", "Approved by operations")
+        self.assertEqual(self.repo.get_loan("L4").status, LoanStatus.READY_FOR_MAIN_JOURNEY.value)
 
     def test_automation_routes_loan_and_preserves_human_gate(self):
         self.repo.seed([LoanApplication("L2", "INCOME_VARIANCE", declared_income=100, verified_income=70)], [])
