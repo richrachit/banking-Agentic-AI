@@ -1,31 +1,82 @@
-# Workflow Details
+# Current Workflow Reference
 
-## Loan resolution state machine
+This document reflects the current local demo implementation in the repository, including the browser UI, loan exception handling, dormancy lifecycle management, and the automation supervisor.
 
-`HELD -> INVESTIGATING -> AWAITING_CUSTOMER | AWAITING_APPROVAL | READY_FOR_MAIN_JOURNEY`
+## 1. End-to-end flow
 
-1. Receive an LOS hold event with application ID, exception code, and correlation ID.
-2. Read relevant LOS, document, and verification evidence through authorized adapters.
-3. Classify the exception and record diagnosis.
-4. For a missing document, create one CRM task and wait for document arrival.
-5. For a transient verification failure, retry through the verifier; record the result.
-6. For an income variance, compare to tolerance. Resolve in-policy variances; package larger variances for the configured credit approver.
-7. On approved deviation, update LOS state and publish a return-to-journey event. On rejection, retain the hold and notify stakeholders.
+1. A user signs in through the web UI and selects a role such as Customer, Loan Operations, Credit Manager, Compliance Officer, or Administrator.
+2. A Customer submits a new loan application. The app creates a loan record, stores uploaded documents, and starts the workflow in the `HELD` state.
+3. The loan agent evaluates the exception code:
+   - `MISSING_DOCUMENT`: checks document completeness and requests the missing evidence.
+   - `VERIFY_TRANSIENT_FAILURE`: retries verification and may recover after a second pass.
+   - `INCOME_VARIANCE`: auto-resolves when within policy tolerance, or routes a deviation approval when it exceeds tolerance.
+4. If a human approval is required, the repository creates an approval record and the workflow pauses until the designated role decides.
+5. Once approved, the loan either returns to the main journey or remains pending for follow-up based on the decision.
+6. The dormancy workflow processes active accounts, starts outreach, classifies dormant accounts, creates transfer approvals, executes approved transfers, and supports later claims.
+7. The automation controller runs a cycle over both loan and account workflows, executes approved transfers/claims, and reports pending human actions.
 
-## Dormancy lifecycle state machine
+## 2. Current loan state machine
+
+`HELD -> AWAITING_CUSTOMER -> AWAITING_APPROVAL -> READY_FOR_MAIN_JOURNEY`
+
+### What happens in each state
+
+- `HELD`: initial state for newly created customer loan requests.
+- `AWAITING_CUSTOMER`: used when the agent needs more evidence or a customer response.
+- `AWAITING_APPROVAL`: used when a policy deviation needs a credit decision.
+- `READY_FOR_MAIN_JOURNEY`: used after successful resolution or after an approved deviation.
+
+### Current exception handling
+
+| Exception code | Current behavior |
+| --- | --- |
+| `MISSING_DOCUMENT` | Verifies required documents for the product and requests any missing or invalid items. |
+| `VERIFY_TRANSIENT_FAILURE` | Retries verification; if the second attempt succeeds, the loan is released. |
+| `INCOME_VARIANCE` | Resolves automatically when within policy tolerance; otherwise creates a credit approval package. |
+
+## 3. Current dormancy lifecycle
 
 `ACTIVE -> OUTREACH -> DORMANT -> TRANSFER_PENDING -> TRANSFERRED -> CLAIM_PENDING -> CLAIM_PAID`
 
-1. Daily scheduler selects active accounts at outreach lead time and creates a non-duplicated multi-channel contact sequence.
-2. At the jurisdictional dormancy threshold, classify accounts as dormant and calculate the transfer due date.
-3. At due date, freeze the balance snapshot in a transfer package and submit it to compliance.
-4. After compliance approval, perform an idempotent transfer instruction and retain a claim-ready record.
-5. For a later claimant, perform identity/entitlement checks through external adapters, then route payment to an authorized approver.
+### Current behavior
 
-## Approval requirements
+1. The agent evaluates each account against the jurisdiction policy and the last customer activity date.
+2. When the account is approaching the dormancy threshold, it marks the account as `OUTREACH` and records re-engagement activity.
+3. When the inactivity threshold is reached, it marks the account as `DORMANT` and calculates a transfer due date.
+4. Once the transfer due date is reached, it creates a compliance approval package for the transfer.
+5. After an approved transfer, the account moves to `TRANSFERRED` and later supports a customer claim.
+6. Claims are only accepted after the transfer exists and identity/entitlement validation is successful.
 
-| Action | Required role |
+## 4. Approval routing in the current app
+
+| Action | Current required role |
 | --- | --- |
 | Loan policy deviation | `credit.manager` |
 | Unclaimed balance transfer | `compliance.officer` |
 | Customer reclaim payment | `claims.officer` |
+
+The approval queue is displayed in the dashboard and is persisted in the repository as part of the local workflow state.
+
+## 5. Document verification flow
+
+The current document verification model checks product-based document requirements:
+
+| Product | Required documents |
+| --- | --- |
+| `PERSONAL` | PAN, Aadhaar, address proof, bank statement, income proof |
+| `HOME` | Personal requirements plus property document |
+| `BUSINESS` | PAN, Aadhaar, business registration, bank statement, financial statement |
+
+The form accepts evidence entries in the form `DOCUMENT:STATUS`, such as `PAN:VALID,AADHAAR:EXPIRED`. Accepted statuses are `VALID`, `PENDING`, `INVALID`, `EXPIRED`, and `UNREADABLE`.
+
+## 6. Automation cycle
+
+The automation supervisor runs the workflow in a safe, human-gated loop:
+
+- it processes held loans,
+- applies approved loan deviations,
+- evaluates dormancy status,
+- executes approved transfers and claims,
+- and reports pending human approvals.
+
+The automation agent does not bypass the approval gate for deviations or money movement.

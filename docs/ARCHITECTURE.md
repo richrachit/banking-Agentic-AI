@@ -1,43 +1,107 @@
 # Architecture and Coding Standards
 
-## Components
+## Current architecture
+
+The repository currently implements a local, browser-driven banking workflow reference. It combines a lightweight web application, domain models, policy-driven agents, an append-only audit log, and a JSON-backed repository.
+
+### Components
 
 | Layer | Responsibility | Local implementation |
 | --- | --- | --- |
-| Interface | CLI/API trigger and operator actions | `cli.py` |
-| Orchestration | Coordinates a workflow and compensates failures | `loan_agent.py`, `dormancy_agent.py` |
-| Policy | Deterministic, versioned decisions; no hidden policy in prompts | `policy.py` |
-| Domain models | Typed business data and state transitions | `models.py` |
-| Integrations | LOS/core/CRM/verification/payment boundaries | repository protocol in `repository.py` |
-| Evidence | Audit events and approval packages | `audit.py`, `repository.py` |
+| Interface | Browser-based workflow entrypoint for customers, operations, credit, compliance, and admins | `banking_agents/web_app.py` |
+| Orchestration | Coordinates loan exception handling, dormancy lifecycle processing, and automation | `banking_agents/loan_agent.py`, `banking_agents/dormancy_agent.py`, `banking_agents/automation_agent.py` |
+| Policy | Stores deterministic business thresholds and role-based rules | `banking_agents/policy.py` |
+| Domain models | Defines loan, account, approval, and status models | `banking_agents/models.py` |
+| Verification | Explains document completeness and status for loan applications | `banking_agents/document_verification.py` |
+| Document AI | Optional AI-assisted document review pipeline | `banking_agents/document_ai.py` |
+| Persistence | Stores workflow state, approvals, and audit events locally | `banking_agents/repository.py`, `banking_agents/audit.py` |
+| CLI | Provides command-line entrypoints for seed data, workflow runs, approvals, and transfer execution | `banking_agents/cli.py` |
 
-## Design decisions
-
-- **Human authority is explicit.** The agent may diagnose, request information, retry a non-financial check, and apply narrowly defined in-policy resolutions. It never approves a policy deviation, executes a regulator transfer, or pays a claim without a recorded approval.
-- **Policy is data.** Thresholds and statutory periods are represented in `PolicyConfig`; a production version should load signed, versioned policy from a governance-controlled source.
-- **Idempotent state transitions.** Re-running an agent does not duplicate approval cases, transfers, or outreach for the same business condition.
-- **Auditable actions.** Every material command emits an event with correlation ID, actor, action, outcome, timestamp, and non-sensitive detail.
-- **No raw personal data in logs.** The demo only logs identifiers. Production logging must redact/tokenize PII and document contents.
-
-## Recommended production deployment
+## Runtime flow
 
 ```text
-Event bus / scheduler
-   -> workflow service (durable state machine)
-       -> policy/rules service
-       -> integration adapters: LOS | core banking | KYC | DMS | CRM | payments
-       -> approval work queue
-       -> immutable audit store + monitoring
+Browser UI
+  -> request handler and role-based form submission
+  -> workflow action dispatcher
+  -> loan agent / dormancy agent / automation agent
+  -> repository state update
+  -> audit log write
+  -> approval queue / dashboard refresh
 ```
 
-Use a durable workflow engine for asynchronous waits (customer document, verifier callback, approval, regulator acknowledgement). Keep agent reasoning constrained to retrieving allowed evidence and proposing actions; validate every action against policy and authorization before execution.
+## Current design decisions
+
+- **Human authority remains explicit.** The agents can diagnose cases, request missing evidence, retry verification, and propose actions, but they do not bypass approvals for deviations or money movement.
+- **Policy is data-driven.** Rules such as dormancy thresholds, transfer wait periods, income tolerance, and required roles live in `PolicyConfig` instead of embedded in the agent logic.
+- **State transitions are visible and typed.** Loan applications and accounts move through well-defined status values that are persisted and displayed back to the user.
+- **Every workflow action is auditable.** The local audit log captures the actor, action, target, outcome, and supporting metadata.
+- **The demo stays local and safe.** The repository is file-based and does not perform real payment or identity verification outside the demo model.
+
+## Component responsibilities
+
+### Web app
+
+The current web app is a local HTTP server that supports:
+
+- customer loan submission with document upload fields,
+- loan operations review,
+- credit decision processing,
+- compliance review and transfer approvals,
+- automation cycle execution,
+- and sign-in/out with role-based access.
+
+### Loan exception agent
+
+The loan agent evaluates the exception code and updates the loan state accordingly. It is responsible for:
+
+- document completeness checks,
+- verification retries,
+- income deviation handling,
+- approval package creation,
+- and returning the loan to the main journey after approval.
+
+### Dormancy agent
+
+The dormancy agent handles account lifecycle progression:
+
+- outreach scheduling,
+- dormancy classification,
+- transfer due date calculation,
+- approval request creation,
+- transfer execution after approval,
+- and claim lifecycle handling.
+
+### Automation controller
+
+The automation agent is a safe supervisor. It iterates through open loans and accounts, executes the constrained workflow steps, and collects pending human actions without bypassing approvals.
+
+## Data and persistence model
+
+The repository persists:
+
+- loan applications,
+- account records,
+- approvals,
+- and workflow events.
+
+The audit layer stores append-only events so the state of the system can be reconstructed and reviewed.
+
+## Production evolution path
+
+To evolve this demo into a production-grade workflow system, the following should be introduced:
+
+- durable workflow orchestration rather than in-process execution,
+- real adapters for LOS, KYC, document management, CRM, and core banking,
+- signed and versioned policy services,
+- identity and authorization infrastructure for real users,
+- encrypted document storage and redaction of PII in logs,
+- and immutable audit storage with monitoring and replay.
 
 ## Coding standards
 
-- Python 3.11+, standard library only in this reference implementation.
-- Type hints on public functions; `dataclass` models with `Enum` states.
-- One business capability per module; orchestration must not contain integration-specific details.
-- Use UTC ISO-8601 timestamps, stable IDs, and correlation IDs.
-- Prefer explicit state transitions and typed policy decisions over boolean flag sprawl.
-- Test normal, retry, duplicate-run, rejection, and approval paths.
-- Do not place secrets, regulator credentials, or customer documents in source control or audit logs.
+- Python 3.11+ is the target runtime for this reference implementation.
+- Use type hints on public functions and dataclasses for structured business objects.
+- Keep modules focused on one business capability; avoid mixing orchestration and integration logic.
+- Prefer explicit state transitions and policy-driven rules over ad-hoc conditionals.
+- Test success, retry, approval, rejection, and duplicate-run scenarios.
+- Keep secrets, customer documents, and regulator-sensitive data out of source control and local audit logs.

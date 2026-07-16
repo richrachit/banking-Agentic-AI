@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 
 from .audit import AuditLog
+from .dormancy_escheatment_platform import DormancyCaseDatabase, DormancyIncentiveCalculator
 from .models import Account, Approval, DormancyStatus, parse_date
 from .policy import PolicyConfig
 from .repository import LocalRepository
 
 
 class DormancyAgent:
-    def __init__(self, repository: LocalRepository, audit: AuditLog, policy: PolicyConfig) -> None:
+    def __init__(self, repository: LocalRepository, audit: AuditLog, policy: PolicyConfig, dormancy_db_path: str | Path | None = None) -> None:
         self.repository, self.audit, self.policy = repository, audit, policy
+        self.incentive_calculator = DormancyIncentiveCalculator()
+        self.dormancy_db = DormancyCaseDatabase(dormancy_db_path or Path.cwd() / "data" / "dormancy_cases.sqlite3") if dormancy_db_path is not None or Path.cwd().exists() else None
 
     def run(self, as_of: date) -> list[Account]:
         processed: list[Account] = []
@@ -37,7 +41,20 @@ class DormancyAgent:
             account.status = DormancyStatus.TRANSFER_PENDING.value
             self.audit.write("dormancy-agent", "transfer.approval_requested", account.account_id, "PENDING", {"approval_id": approval.approval_id})
         self.repository.save_account(account)
+        self._persist_case(account, as_of, inactive_days)
         return account
+
+    def _persist_case(self, account: Account, as_of: date, inactive_days: int) -> None:
+        if self.dormancy_db is None:
+            return
+        case_id = self.dormancy_db.create_case(account.account_id, account.customer_id, account.jurisdiction, account.balance, as_of, inactive_days)
+        self.dormancy_db.record_event(case_id, "ACCOUNT_PROCESSED", f"Status: {account.status}")
+        if account.status in {DormancyStatus.OUTREACH.value, DormancyStatus.DORMANT.value, DormancyStatus.TRANSFER_PENDING.value}:
+            self.dormancy_db.record_outreach(case_id, "SMS", "SENT", "Outreach queued")
+        if account.status in {DormancyStatus.DORMANT.value, DormancyStatus.TRANSFER_PENDING.value, DormancyStatus.TRANSFERRED.value}:
+            incentive = self.incentive_calculator.calculate_incentive(account.balance, inactive_days)
+            self.dormancy_db.record_trace(case_id, "RBI_RULE_ENGINE", "INCENTIVE_TIER", incentive.rationale, incentive.tier)
+            self.dormancy_db.record_filing(case_id, "DEA_REPORT", "PENDING", f"Potential payout: {incentive.amount:.2f}")
 
     def execute_approved_transfers(self) -> list[Account]:
         updated: list[Account] = []

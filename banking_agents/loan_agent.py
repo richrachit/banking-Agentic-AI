@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from .audit import AuditLog
 from .document_verification import DocumentVerificationModel
+from .loan_exception_platform import LoanExceptionDatabase, PolicyVarianceSandbox
 from .models import Approval, LoanApplication, LoanStatus
 from .policy import PolicyConfig
 from .repository import LocalRepository
 
 
 class LoanExceptionAgent:
-    def __init__(self, repository: LocalRepository, audit: AuditLog, policy: PolicyConfig, document_model: DocumentVerificationModel | None = None) -> None:
+    def __init__(self, repository: LocalRepository, audit: AuditLog, policy: PolicyConfig, document_model: DocumentVerificationModel | None = None, exception_db_path: str | Path | None = None) -> None:
         self.repository, self.audit, self.policy = repository, audit, policy
         self.document_model = document_model or DocumentVerificationModel()
+        self.policy_sandbox = PolicyVarianceSandbox(tolerance_ratio=policy.income_variance_tolerance)
+        self.exception_db = LoanExceptionDatabase(exception_db_path or Path.cwd() / "data" / "loan_exception_cases.sqlite3") if exception_db_path is not None or Path.cwd().exists() else None
 
     def run(self, application_id: str) -> LoanApplication:
         loan = self.repository.get_loan(application_id)
@@ -68,11 +73,13 @@ class LoanExceptionAgent:
         return loan
 
     def _resolve_income_variance(self, loan: LoanApplication) -> LoanApplication:
-        if self.policy.income_within_tolerance(loan.declared_income, loan.verified_income):
+        decision = self.policy_sandbox.evaluate_variance(loan.declared_income, loan.verified_income)
+        if decision.safe_to_auto_adjust:
             loan.status = LoanStatus.READY_FOR_MAIN_JOURNEY.value
             loan.diagnosis = "Income variance is within policy tolerance."
             self.repository.save_loan(loan)
             self.audit.write("loan-agent", "loan.auto_resolved", loan.application_id, "SUCCESS", {"rule": "income_tolerance"})
+            self._persist_exception_case(loan, decision)
             return loan
         approval = self.repository.create_approval(Approval(
             approval_id=f"APR-{len(self.repository.list_approvals()) + 1:04d}", kind="LOAN_DEVIATION", entity_id=loan.application_id,
@@ -82,4 +89,13 @@ class LoanExceptionAgent:
         loan.diagnosis = f"Income variance exceeds policy; routed to {approval.required_role}."
         self.repository.save_loan(loan)
         self.audit.write("loan-agent", "approval.requested", loan.application_id, "PENDING", {"approval_id": approval.approval_id, "kind": approval.kind})
+        self._persist_exception_case(loan, decision)
         return loan
+
+    def _persist_exception_case(self, loan: LoanApplication, decision) -> None:
+        if self.exception_db is None:
+            return
+        case_id = self.exception_db.create_case(loan.application_id, loan.exception_code, customer_name=loan.applicant_name or loan.relationship_manager or "Unknown")
+        self.exception_db.save_policy_decision(case_id, loan.declared_income, loan.verified_income, decision.action, decision.rationale)
+        if loan.documents:
+            self.exception_db.save_document(case_id, "loan_documents", "loan_documents", ", ".join(loan.documents), 80, [], {"documents": loan.documents}, False)
