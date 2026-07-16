@@ -144,6 +144,17 @@ Run tests from the project root with the module command above. Do **not** run `p
 5. Inspect `data/state.json` and `data/audit.jsonl` to see persisted workflow state and immutable-style audit events.
 6. Replace the JSON repositories in `banking_agents/repository.py` with LOS, core-banking, CRM, document, verification, and payment adapters before connecting real systems.
 
+## PostgreSQL deployment foundation
+
+The current browser demo uses local JSON for simplicity. The production data contract is in `database/schema.sql` and covers users, applications, documents, workflow progression, approvals, dormant-account cases, outreach, and immutable audit events.
+
+```powershell
+docker compose up -d postgres
+.\.venv\Scripts\python.exe -m pip install -r requirements-postgres.txt
+```
+
+Use this schema as the migration baseline; do not copy demo credentials or local-file document storage into a production environment. See [research and implementation guidance](docs/RESEARCH.md).
+
 ## Optional local document-AI model
 
 The app includes an optional Qwen2.5-VL vision-language provider for image document triage. It requires substantial disk/RAM and benefits from a GPU. It only produces a review suggestion and never automatically approves a document.

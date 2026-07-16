@@ -83,3 +83,13 @@ The automation supervisor runs the workflow in a safe, human-gated loop:
 - and reports pending human approvals.
 
 The automation agent does not bypass the approval gate for deviations or money movement.
+
+## 7. Customer-to-disbursement progression
+
+1. Customer submits a loan request and product-specific documents.
+2. **AI starts:** mandatory-data validation, document classification/extraction, integrity checks, and evidence requests.
+3. **AI continues:** affordability, credit/fraud adapter signals, and an explainable policy recommendation.
+4. Human review is mandatory for deviations, medium confidence, fraud signals, high-value loans, and every financial action.
+5. Customer eSigns; Operations disburses only after all controls and approvals pass.
+
+The application-detail screen shows this progression and marks the AI-owned stages.

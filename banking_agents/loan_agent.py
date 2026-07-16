@@ -78,10 +78,10 @@ class LoanExceptionAgent:
 
     def reopen_application(self, application_id: str, reason: str) -> LoanApplication:
         loan = self.repository.get_loan(application_id)
-        loan.status = LoanStatus.REOPENED.value
+        loan.status = LoanStatus.AWAITING_CUSTOMER.value
         loan.diagnosis = f"Application reopened for review: {reason}"
         self.repository.save_loan(loan)
-        self.audit.write("loan-agent", "loan.reopened", application_id, "REOPENED", {"reason": reason})
+        self.audit.write("loan-agent", "loan.reopened", application_id, "AWAITING_CUSTOMER", {"reason": reason})
         return loan
 
     def _resolve_missing_document(self, loan: LoanApplication) -> LoanApplication:

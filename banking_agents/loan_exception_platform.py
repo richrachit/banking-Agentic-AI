@@ -120,10 +120,10 @@ class LoanExceptionDatabase:
     def create_case(self, application_id: str, exception_code: str, customer_name: str | None = None) -> int:
         conn = sqlite3.connect(self.db_path)
         try:
-            cursor = conn.execute(
-                "INSERT INTO loan_exception_cases(application_id, exception_code, customer_name) VALUES (?, ?, ?)",
-                (application_id, exception_code, customer_name),
-            )
+            existing = conn.execute("SELECT id FROM loan_exception_cases WHERE application_id = ?", (application_id,)).fetchone()
+            if existing:
+                return int(existing[0])
+            cursor = conn.execute("INSERT INTO loan_exception_cases(application_id, exception_code, customer_name) VALUES (?, ?, ?)", (application_id, exception_code, customer_name))
             conn.commit()
             return int(cursor.lastrowid)
         finally:

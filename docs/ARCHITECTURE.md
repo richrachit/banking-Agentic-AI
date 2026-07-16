@@ -116,3 +116,7 @@ To evolve this demo into a production-grade workflow system, the following shoul
 - Prefer explicit state transitions and policy-driven rules over ad-hoc conditionals.
 - Test success, retry, approval, rejection, and duplicate-run scenarios.
 - Keep secrets, customer documents, and regulator-sensitive data out of source control and local audit logs.
+
+## PostgreSQL production data contract
+
+`database/schema.sql` provides a PostgreSQL baseline for users/roles, loan applications, document metadata and AI outputs, workflow steps, approvals, dormant-account cases, outreach, and immutable audit events. Store document bytes in encrypted object storage; persist only an object key, content hash, model result, and retention metadata in PostgreSQL. The JSON and SQLite stores are local-demo adapters, not a production persistence design.
