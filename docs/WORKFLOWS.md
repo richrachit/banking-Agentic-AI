@@ -11,7 +11,7 @@ This document describes the workflows that the current code executes, including 
 | Credit Manager | Credit-score review and loan-deviation queue | Matching `credit.manager` approvals | Transfer unclaimed balances or disburse a loan |
 | Compliance Officer | Dormancy assessment, transfer/reactivation queue, automation cycle | Matching `compliance.officer` approvals | Approve credit deviations |
 | Claims Officer | Claim review in the domain/CLI workflow | Matching `claims.officer` approval | Other approval types |
-| Administrator | Local cross-system/model view and demo automation | Current API permits any approval | Must not retain business-approval bypass in production |
+| Administrator | Local cross-system/model view, AI-agent availability controls, and demo automation | Current API permits any approval and may enable/disable registered components | Must not retain business-approval bypass or ungoverned production change control |
 
 ## 2. Loan application and AI start point
 
@@ -36,6 +36,8 @@ Normal lending systems (future integration)
 ```
 
 `banking_agents/progression.py` exposes eight user-facing stages. The first AI-active stage is **Consent and credit-bureau assessment**, immediately after application submission. The progression is explanatory; persisted loan status and approval records are the source of truth.
+
+The browser and mobile loan forms also check required fields before submission and show a visible error state/modal when information is missing. That client-side feedback does not replace server validation: the API still validates the full request and returns a redacted field-violation response if a malformed request reaches it.
 
 ## 3. Consent and CIBIL-style score workflow
 
@@ -187,7 +189,25 @@ Jurisdiction differences and effective-date changes must be represented as compl
 
 It is callable by `LOAN`, `COMPLIANCE`, and `ADMIN` through the API. The caller's ability to start a cycle does not grant authority to create an approval outcome.
 
-## 9. API-to-workflow mapping
+## 9. Support-chatbot and AI-control workflow
+
+```text
+Authenticated browser/mobile user
+  -> submits a 1–1000 character support question
+  -> role/entity scope is applied before any workflow fact is read
+  -> optional verified local intent artifact classifies a bounded support intent
+       otherwise deterministic retrieval classifies the same bounded topic set
+  -> assistant returns explanation, safe navigation hints, and its read-only boundary
+  -> audit records intent/source only; message/reply are not stored for training
+```
+
+The chatbot can explain application status, required documents, bureau routing, approved-role queues, agent boundaries, and dormant-account reactivation. It cannot submit or amend an application, make/override a decision, verify KYC, disburse, transfer or pay money, or mutate an account. A customer sees only their own loans/accounts; Compliance cannot retrieve loan information; internal approval summaries are limited to each role's queue.
+
+Training is deliberately separate from live chat. `scripts/train_chatbot.py` seeds only 36 curated local phrases, writes training-run metadata to `data/chatbot_training.sqlite3`, and stores the hash-recorded joblib artifact in `data/models/`. It is a local intent-routing demonstration, not a generative banking assistant or production-quality validation. If the artifact is absent, invalid, or cannot be loaded, the support assistant remains available through deterministic logic.
+
+An Administrator can list all registered component controls and change an enabled flag in the browser/mobile AI settings page or via the API. A registered component is enabled by default. For components that protect active routes, disabled means the dependent action returns `503`; the system must not work around a disabled control. The local settings file records the last Administrator actor/time but is not an enterprise change-management or emergency-kill-switch system.
+
+## 10. API-to-workflow mapping
 
 | User intent | Endpoint | Workflow effect |
 | --- | --- | --- |
@@ -202,8 +222,11 @@ It is callable by `LOAN`, `COMPLIANCE`, and `ADMIN` through the API. The caller'
 | Request reactivation | `POST /api/v1/accounts/{id}/reactivation-requests` | Compliance package; no immediate reactivation |
 | Run dormancy | `POST /api/v1/dormancy/cycles` | Save/evaluate supplied account facts |
 | Run supervisor | `POST /api/v1/automation/cycles` | Bounded cross-workflow cycle |
+| Ask support assistant | `POST /api/v1/chat/messages` | Read-only, role-scoped workflow explanation and safe navigation hints |
+| Inspect AI controls | `GET /api/v1/ai/agents` | Administrator sees registered settings and chatbot-training aggregate status |
+| Change AI availability | `POST /api/v1/ai/agents/{model_key}/settings` | Administrator enables/disables a component; wired dependent routes fail closed |
 
-## 10. Data and audit sequence
+## 11. Data and audit sequence
 
 Each current operation can write one or more local stores:
 
@@ -215,10 +238,12 @@ Each current operation can write one or more local stores:
 | Dormancy/outreach/filing | `data/dormancy_cases.sqlite3` | `outreach_attempt`, `workflow_step` |
 | Actor/action trail | `data/audit.jsonl` | `immutable_audit_event` plus WORM store |
 | Model lifecycle | `data/model_training.sqlite3`, `data/models/` | `ai_model_catalog`, `ai_training_example`, `ai_training_run`, `ai_model_prediction`, artifact registry |
+| Chatbot lifecycle | `data/chatbot_training.sqlite3`, `data/models/` | `chatbot_training_example`, `chatbot_training_run`, artifact registry; no live messages |
+| Agent availability | `data/agent_settings.json` | `ai_agent_setting`, audited change-control event |
 
 The local writes are not one atomic transaction. Production needs transactional state/outbox, retries, reconciliation, and duplicate protection across every external side effect.
 
-## 11. Outcome meanings
+## 12. Outcome meanings
 
 | Outcome/state | Exact meaning |
 | --- | --- |

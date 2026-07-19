@@ -3,6 +3,9 @@
 *.py[cod]
 data/model_training.sqlite3
 data/model_training.sqlite3-*
+data/chatbot_training.sqlite3
+data/chatbot_training.sqlite3-*
+data/agent_settings.json
 data/credit_bureau.sqlite3
 data/credit_bureau.sqlite3-*
 data/models/

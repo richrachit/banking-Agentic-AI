@@ -146,19 +146,34 @@ export function ChoiceChips<T extends string>({
   );
 }
 
-export function CheckRow({ checked, onChange, title, body }: { checked: boolean; onChange: (value: boolean) => void; title: string; body?: string }) {
+export function CheckRow({
+  checked,
+  onChange,
+  title,
+  body,
+  error,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  title: string;
+  body?: string;
+  error?: string;
+}) {
   return (
-    <Pressable
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked }}
-      onPress={() => onChange(!checked)}
-      style={[styles.checkRow, checked && styles.checkRowActive]}>
-      <View style={[styles.checkbox, checked && styles.checkboxActive]}>{checked ? <Text style={styles.checkmark}>✓</Text> : null}</View>
-      <View style={styles.checkCopy}>
-        <Text style={styles.checkTitle}>{title}</Text>
-        {body ? <Text style={styles.hint}>{body}</Text> : null}
-      </View>
-    </Pressable>
+    <View style={styles.fieldWrap}>
+      <Pressable
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked }}
+        onPress={() => onChange(!checked)}
+        style={[styles.checkRow, checked && styles.checkRowActive, error && styles.checkRowError]}>
+        <View style={[styles.checkbox, checked && styles.checkboxActive, error && !checked && styles.checkboxError]}>{checked ? <Text style={styles.checkmark}>✓</Text> : null}</View>
+        <View style={styles.checkCopy}>
+          <Text style={styles.checkTitle}>{title}</Text>
+          {body ? <Text style={styles.hint}>{body}</Text> : null}
+        </View>
+      </Pressable>
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+    </View>
   );
 }
 
@@ -292,8 +307,10 @@ const styles = StyleSheet.create({
   choiceTextActive: { color: colors.primaryDark },
   checkRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, borderRadius: radius.sm, padding: 14 },
   checkRowActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  checkRowError: { borderColor: colors.danger, backgroundColor: '#FFF8F7' },
   checkbox: { width: 23, height: 23, borderWidth: 2, borderColor: '#9FB3C8', borderRadius: 7, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
   checkboxActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  checkboxError: { borderColor: colors.danger },
   checkmark: { color: colors.white, fontWeight: '900', fontSize: 14 },
   checkCopy: { flex: 1, gap: 3 },
   checkTitle: { color: colors.ink, fontSize: 14, lineHeight: 20, fontWeight: '800' },

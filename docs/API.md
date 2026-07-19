@@ -74,6 +74,10 @@ Application-generated HTTP errors use `application/problem+json`:
 
 Request-shape errors also use `application/problem+json`. Their payload adds a `violations` array containing only field location, message, and type. The handler deliberately removes Pydantic's raw `input` values so credentials, PAN, and contact data are not echoed in an error response.
 
+### Client validation and error UX
+
+The browser and mobile clients validate required loan-application fields before sending a request and surface a visible error message/modal that asks the user to complete the missing information. This is a usability layer only: the API still validates every request, rejects unknown fields, and returns the redacted problem response described above. Clients should map `violations` to their relevant field without rendering back the rejected value or other sensitive data.
+
 ### Content types
 
 - JSON endpoints accept and return `application/json`.
@@ -90,7 +94,7 @@ Request-shape errors also use `application/problem+json`. Their payload adds a `
 | `LOAN` | Loan Operations | View loans and loan/credit-related approval context, upload documents, run the exception agent, run automation |
 | `CREDIT` | Credit Manager | View loans and credit-manager approvals; decide matching approvals |
 | `COMPLIANCE` | Compliance Officer | View accounts and compliance approvals; run dormancy; decide matching approvals; run automation |
-| `ADMIN` | Local administrator | Cross-system visibility, automation, model registry, and—currently—any approval decision |
+| `ADMIN` | Local administrator | Cross-system visibility, automation, model registry, AI-agent availability settings, and—currently—any approval decision |
 
 Customer ownership checks intentionally return `404` for another customer's resource to avoid confirming its existence. The current `ADMIN` decision permission is a demo convenience; production segregation of duties should prevent administrators from becoming implicit business approvers.
 
@@ -120,7 +124,10 @@ All paths below are relative to `/api/v1`.
 | `POST /accounts/{account_id}/reactivation-requests` | Bearer | `CUSTOMER` | Creates a compliance approval after current-KYC confirmation |
 | `POST /dormancy/cycles` | Bearer | `COMPLIANCE`, `ADMIN` | Saves the supplied account facts and evaluates its lifecycle at an as-of date |
 | `POST /automation/cycles` | Bearer | `LOAN`, `COMPLIANCE`, `ADMIN` | Runs the bounded loan/dormancy supervisor cycle |
+| `POST /chat/messages` | Bearer | Any authenticated role | Returns a role-scoped, read-only support-assistant response; never executes a banking action |
 | `GET /ai/models` | Bearer | `ADMIN` | Model catalog, local data counts, and latest training-run metadata |
+| `GET /ai/agents` | Bearer | `ADMIN` | Registered component availability settings and local chatbot-training status |
+| `POST /ai/agents/{model_key}/settings` | Bearer | `ADMIN` | Enable or disable one registered component; dependent wired routes fail closed while disabled |
 
 The generated OpenAPI document is the field-level contract. The sections below explain the business behavior that cannot be inferred from schemas alone.
 
@@ -288,6 +295,49 @@ Compliance lifecycle run:
 ```
 
 The included jurisdiction thresholds are illustrative. Legal/compliance must approve current rules before any live dormancy classification, filing, transfer, or claim processing.
+
+## Support assistant
+
+All authenticated roles can use the support endpoint:
+
+```json
+POST /api/v1/chat/messages
+
+{
+  "message": "What is the status of my latest loan?"
+}
+```
+
+`message` is required and limited to 1–1000 characters. The response contains a `reply`, normalized `intent`, `source`, `mode`, `suggested_prompts`, optional navigation `actions`, and a `read_only=true` authority boundary. The assistant can explain role-scoped workflow information such as loan status, document requirements, bureau routing, approval queues, agent controls, and dormant-account reactivation.
+
+It applies the same data scope as the application: a customer can only receive information about loans they submitted and accounts they own; Compliance has no loan-data view; approval counts are limited to the caller's authorised queue. It refuses requests to submit, approve, reject, verify KYC, change a score, disburse, transfer funds, pay a claim, or update an account. The corresponding browser/mobile pages remain the only UI navigation target; all workflow writes still go through their normal role/approval APIs.
+
+The default response selection is deterministic retrieval. When a valid, hash-verified local intent artifact is available, the assistant first uses the trained intent classifier and reports `mode=TRAINED_INTENT_RETRIEVAL`; it otherwise remains available through deterministic logic. The training model is not a generative LLM and it does not have tool or banking-action authority.
+
+The API audit event records only the actor, `chat.assistant_responded`, role-scoped chat entity, selected intent/source, and `read_only` flag. It deliberately does **not** record the message or reply. Live messages are not written to the chatbot training database or model artifact.
+
+## AI agent availability controls
+
+Administrators can inspect registered component settings and the local chatbot training summary:
+
+```http
+GET /api/v1/ai/agents
+Authorization: Bearer <admin-token>
+```
+
+The `data.agents` array contains the model key, display name, component type, trainability, risk tier, authority boundary, enabled state, last changing actor/time, and `fail_closed_when_disabled=true`. `data.chatbotTraining` contains only the chatbot store's aggregate example/intent counts and latest-run metadata; it contains no live chat text.
+
+To change one setting:
+
+```json
+POST /api/v1/ai/agents/{model_key}/settings
+
+{
+  "enabled": false
+}
+```
+
+The local control records the Administrator actor/time in `data/agent_settings.json` and writes an audit event. Components default to enabled. If a disabled component is used by a protected workflow route, that route returns `503` and explains that the dependent workflow is unavailable until re-enabled. It never substitutes a bypass or weaker control. Some catalogued components are governance/optional providers rather than active route dependencies; changing their local availability setting is not a substitute for production model-serving, credential revocation, change approval, or operational kill-switch controls.
 
 ## Production hardening checklist
 

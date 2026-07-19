@@ -5,7 +5,7 @@ import { useAuth } from '@/context/auth';
 import { apiRequest, jsonBody } from '@/lib/api';
 import type { AgentSetting, AgentSettingsResponse } from '@/lib/types';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Animated, Modal, StyleSheet, Switch, Text, View } from 'react-native';
 
 type PendingChange = {
@@ -27,7 +27,7 @@ export default function AgentSettingsScreen() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [pendingChange, setPendingChange] = useState<PendingChange | null>(null);
-  const pulse = useRef(new Animated.Value(0)).current;
+  const [pulse] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     const animation = Animated.loop(
@@ -178,7 +178,10 @@ export default function AgentSettingsScreen() {
 }
 
 function ChatbotTrainingCard({ data }: { data: NonNullable<AgentSettingsResponse['chatbotTraining']> }) {
-  const examples = data.examples;
+  const intentCount = Object.keys(data.intent_counts || {}).length;
+  const latestRun = data.latest_run;
+  const metrics = latestRun?.metrics || {};
+  const accuracy = typeof metrics.accuracy === 'number' ? `${Math.round(metrics.accuracy * 100)}%` : null;
   return (
     <Card style={styles.trainingCard}>
       <View style={styles.trainingTop}>
@@ -186,23 +189,22 @@ function ChatbotTrainingCard({ data }: { data: NonNullable<AgentSettingsResponse
           <Text style={styles.trainingEyebrow}>CHATBOT TRAINING</Text>
           <Text style={styles.trainingTitle}>Support assistant readiness</Text>
         </View>
-        {data.status ? <StatusPill value={data.status} /> : null}
+        <StatusPill value={latestRun?.status || 'NOT TRAINED'} />
       </View>
-      <Text style={styles.trainingBody}>Training examples are only used after governance review. Customer chat text is not retained as model-training data.</Text>
-      {examples ? (
-        <View style={styles.trainingMetrics}>
-          <TrainingMetric label="Examples" value={examples.total} />
-          <TrainingMetric label="Positive" value={examples.positive} />
-          <TrainingMetric label="Negative" value={examples.negative} />
-          <TrainingMetric label="Verified" value={examples.human_verified} />
-        </View>
-      ) : null}
-      {data.latest_run ? <Text style={styles.latestRun}>Latest run: {data.latest_run.status || 'Recorded'} · {data.latest_run.algorithm || 'Configured algorithm'}</Text> : null}
+      <Text style={styles.trainingBody}>{data.training_data_policy || 'Only governed, curated support examples are used for local model training. Customer chat text is not retained as training data.'}</Text>
+      <View style={styles.trainingMetrics}>
+        <TrainingMetric label="Curated examples" value={data.sample_count} />
+        <TrainingMetric label="Intent classes" value={intentCount} />
+        <TrainingMetric label="Latest run samples" value={latestRun?.sample_count} />
+        <TrainingMetric label="Validation accuracy" value={accuracy || '—'} />
+      </View>
+      {latestRun ? <Text style={styles.latestRun}>Latest run: {latestRun.status || 'Recorded'}{latestRun.trained_at ? ` · ${formatChangeTimestamp(latestRun.trained_at)}` : ''}</Text> : null}
+      {data.database ? <Text style={styles.trainingLocation}>Local training database: {data.database}</Text> : null}
     </Card>
   );
 }
 
-function TrainingMetric({ label, value }: { label: string; value?: number }) {
+function TrainingMetric({ label, value }: { label: string; value?: number | string }) {
   return <View style={styles.trainingMetric}><Text style={styles.trainingMetricValue}>{value ?? '—'}</Text><Text style={styles.trainingMetricLabel}>{label}</Text></View>;
 }
 
@@ -222,6 +224,7 @@ const styles = StyleSheet.create({
   trainingMetricValue: { color: colors.ink, fontSize: 18, fontWeight: '900' },
   trainingMetricLabel: { color: colors.muted, fontSize: 9, fontWeight: '800', textTransform: 'uppercase', marginTop: 2 },
   latestRun: { color: colors.primaryDark, fontSize: 11, fontWeight: '700' },
+  trainingLocation: { color: colors.muted, fontSize: 10, lineHeight: 15 },
   agentCard: { gap: 14 },
   agentCardDisabled: { backgroundColor: '#FBFCFD', borderColor: '#D7DEE7' },
   agentTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14 },

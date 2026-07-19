@@ -151,14 +151,14 @@ export default function NewLoanScreen() {
       <Card style={styles.section}>
         <Text style={styles.sectionNumber}>01</Text><Text style={styles.sectionHeading}>Personal information</Text>
         {pair(
-          <Field label="Applicant name *" value={form.applicant_name} onChangeText={set('applicant_name')} autoCapitalize="words" />,
-          <Field label="Date of birth *" hint="YYYY-MM-DD" value={form.date_of_birth} onChangeText={set('date_of_birth')} keyboardType="numbers-and-punctuation" />,
+          <Field label="Applicant name *" value={form.applicant_name} onChangeText={set('applicant_name')} autoCapitalize="words" error={fieldErrors.applicant_name} />,
+          <Field label="Date of birth *" hint="YYYY-MM-DD" value={form.date_of_birth} onChangeText={set('date_of_birth')} keyboardType="numbers-and-punctuation" error={fieldErrors.date_of_birth} />,
         )}
         {pair(
-          <Field label="Email *" value={form.email} onChangeText={set('email')} keyboardType="email-address" autoCapitalize="none" />,
-          <Field label="Mobile number *" value={form.phone} onChangeText={set('phone')} keyboardType="phone-pad" />,
+          <Field label="Email *" value={form.email} onChangeText={set('email')} keyboardType="email-address" autoCapitalize="none" error={fieldErrors.email} />,
+          <Field label="Mobile number *" value={form.phone} onChangeText={set('phone')} keyboardType="phone-pad" error={fieldErrors.phone} />,
         )}
-        <Field label="Residential address *" value={form.residential_address} onChangeText={set('residential_address')} multiline numberOfLines={3} />
+        <Field label="Residential address *" value={form.residential_address} onChangeText={set('residential_address')} multiline numberOfLines={3} error={fieldErrors.residential_address} />
       </Card>
 
       <Card style={styles.section}>
@@ -168,10 +168,11 @@ export default function NewLoanScreen() {
           value={form.employment_type}
           onChange={set('employment_type')}
           options={[{ value: 'SALARIED', label: 'Salaried' }, { value: 'SELF_EMPLOYED', label: 'Self-employed' }, { value: 'BUSINESS_OWNER', label: 'Business owner' }]}
+          error={fieldErrors.employment_type}
         />
         {pair(
           <Field label="Employer / business" value={form.employer_name} onChangeText={set('employer_name')} />,
-          <Field label="Monthly income (₹) *" value={form.monthly_income} onChangeText={set('monthly_income')} keyboardType="decimal-pad" />,
+          <Field label="Monthly income (₹) *" value={form.monthly_income} onChangeText={set('monthly_income')} keyboardType="decimal-pad" error={fieldErrors.monthly_income} />,
         )}
       </Card>
 
@@ -184,10 +185,10 @@ export default function NewLoanScreen() {
           options={[{ value: 'PERSONAL', label: 'Personal' }, { value: 'HOME', label: 'Home' }, { value: 'BUSINESS', label: 'Business' }]}
         />
         {pair(
-          <Field label="Requested amount (₹) *" value={form.requested_amount} onChangeText={set('requested_amount')} keyboardType="decimal-pad" />,
-          <Field label="Tenure (months) *" value={form.tenure_months} onChangeText={set('tenure_months')} keyboardType="number-pad" />,
+          <Field label="Requested amount (₹) *" value={form.requested_amount} onChangeText={set('requested_amount')} keyboardType="decimal-pad" error={fieldErrors.requested_amount} />,
+          <Field label="Tenure (months) *" value={form.tenure_months} onChangeText={set('tenure_months')} keyboardType="number-pad" error={fieldErrors.tenure_months} />,
         )}
-        <Field label="Loan purpose *" value={form.loan_purpose} onChangeText={set('loan_purpose')} multiline numberOfLines={3} />
+        <Field label="Loan purpose *" value={form.loan_purpose} onChangeText={set('loan_purpose')} multiline numberOfLines={3} error={fieldErrors.loan_purpose} />
       </Card>
 
       <Card style={styles.section}>
@@ -212,13 +213,15 @@ export default function NewLoanScreen() {
           autoCapitalize="characters"
           autoCorrect={false}
           maxLength={10}
+          error={fieldErrors.pan_for_bureau_lookup}
         />
         <Banner title="How the decision works" body="After consent, the credit-bureau agent retrieves the available result. High-score cases continue through document and exception checks; low-score cases may be declined under configured bank policy; borderline or unavailable results require human review." />
         <CheckRow
           checked={consent}
-          onChange={setConsent}
+          onChange={updateConsent}
           title="I explicitly authorise this credit-bureau enquiry."
           body="I understand the result is used for this loan assessment and the decision and reference are retained in the audit trail."
+          error={fieldErrors.consent}
         />
       </Card>
 
@@ -226,6 +229,11 @@ export default function NewLoanScreen() {
         <Button label="Cancel" variant="ghost" onPress={() => router.back()} />
         <Button label="Submit and run assessment" loading={submitting} onPress={submit} />
       </View>
+      <FormErrorModal
+        visible={showValidationModal}
+        items={validationItems}
+        onClose={() => setShowValidationModal(false)}
+      />
     </AppPage>
   );
 }

@@ -152,19 +152,23 @@ export type AgentSetting = {
 };
 
 export type ChatbotTrainingSummary = {
-  status?: string;
-  examples?: {
-    total?: number;
-    positive?: number;
-    negative?: number;
-    human_verified?: number;
-    synthetic?: number;
-  };
+  database?: string;
+  model_key?: string;
+  sample_count?: number;
+  intent_counts?: Record<string, number>;
   latest_run?: {
+    run_id?: string;
     status?: string;
-    algorithm?: string;
+    sample_count?: number;
+    intent_counts?: Record<string, number>;
     metrics?: Record<string, number>;
+    artifact_path?: string;
+    artifact_sha256?: string;
+    library_versions?: Record<string, string>;
+    trained_at?: string;
+    trained_by?: string;
   } | null;
+  training_data_policy?: string;
 };
 
 export type AgentSettingsResponse = {

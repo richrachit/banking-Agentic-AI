@@ -1,3 +1,4 @@
+import gc
 import tempfile
 import unittest
 from contextlib import closing
@@ -25,6 +26,7 @@ class ApiAppTests(unittest.TestCase):
 
     def tearDown(self):
         self.client.close()
+        gc.collect()
         self.temp.cleanup()
 
     def login(self, username="customer", password="customer123", user_type="CUSTOMER"):
@@ -87,6 +89,92 @@ class ApiAppTests(unittest.TestCase):
         response = self.client.get("/api/v1/ai/models", headers=admin_headers)
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(len(response.json()["data"]["components"]), 10)
+
+    def test_chat_endpoint_requires_auth_is_read_only_and_does_not_audit_message_text(self):
+        self.assertEqual(self.client.post("/api/v1/chat/messages", json={"message": "hello"}).status_code, 401)
+        headers = self.login()
+        secret_message = "PRIVATE-CHAT-TEXT-DO-NOT-PERSIST what is my loan status?"
+        response = self.client.post(
+            "/api/v1/chat/messages",
+            json={"message": secret_message},
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assertEqual(data["intent"], "LOAN_STATUS")
+        self.assertTrue(data["read_only"])
+        self.assertIn("authority_boundary", data)
+
+        audit = (self.root / "audit.jsonl").read_text(encoding="utf-8")
+        self.assertIn("chat.assistant_responded", audit)
+        self.assertNotIn("PRIVATE-CHAT-TEXT-DO-NOT-PERSIST", audit)
+
+    def test_admin_agent_settings_are_role_restricted_and_fail_closed(self):
+        customer_headers = self.login()
+        self.assertEqual(self.client.get("/api/v1/ai/agents", headers=customer_headers).status_code, 403)
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/ai/agents/banking_support_chatbot/settings",
+                json={"enabled": False},
+                headers=customer_headers,
+            ).status_code,
+            403,
+        )
+
+        admin_headers = self.login("admin", "admin123", "ADMIN")
+        listing = self.client.get("/api/v1/ai/agents", headers=admin_headers)
+        self.assertEqual(listing.status_code, 200)
+        settings = {item["model_key"]: item for item in listing.json()["data"]["agents"]}
+        self.assertIn("banking_support_chatbot", settings)
+        self.assertTrue(settings["banking_support_chatbot"]["fail_closed_when_disabled"])
+
+        disabled = self.client.post(
+            "/api/v1/ai/agents/banking_support_chatbot/settings",
+            json={"enabled": False},
+            headers=admin_headers,
+        )
+        self.assertEqual(disabled.status_code, 200)
+        self.assertFalse(disabled.json()["data"]["enabled"])
+        unavailable = self.client.post(
+            "/api/v1/chat/messages",
+            json={"message": "What can you help me with?"},
+            headers=customer_headers,
+        )
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertIn("disabled", unavailable.json()["detail"].lower())
+
+        enabled = self.client.post(
+            "/api/v1/ai/agents/banking_support_chatbot/settings",
+            json={"enabled": True},
+            headers=admin_headers,
+        )
+        self.assertEqual(enabled.status_code, 200)
+        self.assertTrue(enabled.json()["data"]["enabled"])
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/chat/messages",
+                json={"message": "What can you help me with?"},
+                headers=customer_headers,
+            ).status_code,
+            200,
+        )
+
+        self.client.post(
+            "/api/v1/ai/agents/credit_bureau_decision_agent/settings",
+            json={"enabled": False},
+            headers=admin_headers,
+        )
+        blocked_loan = self.client.post(
+            "/api/v1/loan-applications",
+            json=self.loan_payload("DEMOA0001A"),
+            headers=customer_headers,
+        )
+        self.assertEqual(blocked_loan.status_code, 503)
+        self.client.post(
+            "/api/v1/ai/agents/credit_bureau_decision_agent/settings",
+            json={"enabled": True},
+            headers=admin_headers,
+        )
 
     def test_intermediate_score_approval_resumes_document_workflow_once(self):
         customer_headers = self.login()

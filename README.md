@@ -22,6 +22,8 @@ The repository combines a responsive multi-persona browser app, a versioned Fast
 | Dormant-account lifecycle | Outreach, dormancy clocks, transfer package/approval, transfer/claim state machine | Current jurisdiction rules, actual communications, filing, ledger and reconciliation adapters |
 | Human approvals | Credit, compliance and claims approval records with audit events | Enterprise workflow, segregation of duties, delegated authority, immutable evidence |
 | Local ML | Two de-identified scikit-learn advisory classifiers and ten-component registry | Independently validated data/model governance and production serving |
+| Support chatbot | Role-scoped, read-only workflow assistant with deterministic retrieval and an optional locally trained intent classifier | Approved conversational design, prompt-injection testing, monitoring, retention controls, and enterprise knowledge retrieval |
+| AI agent controls | Administrator can enable/disable each registered component; dependent routes fail closed when disabled | Change management, approval, separation of duties, monitoring, and a central feature-control service |
 | Persistence | JSON state/audit plus capability-specific SQLite stores | PostgreSQL repositories, encrypted object storage, WORM audit store |
 
 ## Personas
@@ -30,7 +32,7 @@ The repository combines a responsive multi-persona browser app, a versioned Fast
 - **Loan Operations:** reviews loan exceptions, supplies evidence, runs the exception agent, and monitors unresolved work.
 - **Credit Manager:** reviews credit-score and policy-deviation packages and records an authorised decision.
 - **Compliance Officer:** manages dormant-account lifecycle cases, transfer approvals, and reactivation/claim controls.
-- **Administrator:** sees cross-system status and local model governance. Production administration must not bypass business approval roles.
+- **Administrator:** sees cross-system status and local model governance, including the AI-agent availability controls. Production administration must not bypass business approval roles or change controls without governed change management.
 
 ## End-to-end loan flow
 
@@ -81,8 +83,10 @@ Responsive browser UI          JSON clients
                  +-- LoanExceptionAgent -- document/KYC providers
                  +-- DormancyAgent
                  +-- OperationsAutomationAgent
+                 +-- BankingSupportChatAgent (read-only)
                  |
-                 +-- LocalRepository + AuditLog + SQLite case/model stores
+                 +-- LocalRepository + AuditLog + SQLite case/model/chatbot stores
+                 +-- AgentSettingsStore (fail-closed local controls)
                                       |
                                       +-- PostgreSQL target schema (not active)
 ```
@@ -97,6 +101,8 @@ Important modules:
 - `banking_agents/dormancy_agent.py` — dormancy, transfer, reactivation, and claim lifecycle.
 - `banking_agents/document_verification.py`, `document_ai.py`, `kyc_ai.py` — document/KYC control layers.
 - `banking_agents/local_models.py`, `training_store.py` — advisory model features, training, artifact validation, and registry.
+- `banking_agents/chat_agent.py`, `chatbot_training.py` — role-scoped support assistant and its curated local intent-training runtime.
+- `banking_agents/agent_settings.py` — persisted, fail-closed availability settings for the registered components.
 - `database/schema.sql` — PostgreSQL target contract; the running demo does not use it yet.
 
 ## Requirements
@@ -192,6 +198,23 @@ The project catalogs ten AI/control components. Only `loan_exception_resolution_
 
 Normal training fails closed unless each trainable model has at least 20 human-verified positive and 20 human-verified negative labels. Synthetic/weak-label accuracy is not production validation. See [docs/MODEL_TRAINING.md](docs/MODEL_TRAINING.md).
 
+### Train the local support-chatbot intent model
+
+The support assistant works with deterministic, role-scoped retrieval before a chatbot artifact exists. The optional classifier only chooses one of the bounded support intents; it never receives tool authority or changes a loan, account, approval, KYC, score, or money state.
+
+```powershell
+# Seeds 36 curated local demo phrases, trains TF-IDF + logistic regression,
+# and writes a hash-recorded artifact below data/models/
+.\.venv\Scripts\python.exe scripts\train_chatbot.py
+
+# Inspect curated example counts and the most recent training run
+.\.venv\Scripts\python.exe scripts\chatbot_status.py
+```
+
+Only the curated phrases in `banking_agents/chatbot_training.py` are inserted into `data/chatbot_training.sqlite3`. Live browser/API/mobile messages are not stored in that training database, audit detail, or model artifact. The run's evaluation scope is explicitly `CURATED_LOCAL_DEMO_NOT_PRODUCTION_VALIDATION`; it is not a customer-data model or production-quality evaluation.
+
+Administrators can inspect every component and enable/disable it in the browser dashboard or mobile **AI settings** page. Disabling a component makes dependent operations unavailable with a fail-closed response; it does not bypass the control. The API equivalents are documented in [docs/API.md](docs/API.md).
+
 ## Optional local document-vision provider
 
 ```powershell
@@ -233,6 +256,8 @@ Run tests as a module from the project root. Directly running `python tests\test
 | `data/dormancy_cases.sqlite3` | Dormancy/outreach/filing case history |
 | `data/model_training.sqlite3` | Model catalog, examples, runs, and advisory predictions |
 | `data/models/` | Hash-registered local joblib artifacts |
+| `data/chatbot_training.sqlite3` | Curated chatbot intent examples and chatbot training-run metadata; never live chat messages |
+| `data/agent_settings.json` | Local Administrator enable/disable settings and last change actor/time for registered components |
 | `data/uploads/` | Unencrypted local uploaded files; development only |
 
 ## Documentation
