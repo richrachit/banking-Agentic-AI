@@ -22,10 +22,8 @@ The CLI persists its state to `data/state.json` and emits an append-only audit l
 - `banking_agents/document_ai.py` — optional AI-powered document triage pipeline.
 
 ```text
-Input adapters -> Detect/classify -> Diagnose -> Resolve / seek evidence
-                                       |                 |
-                                       +-> Human approval +-> Core-system update
-                                                              -> Audit + notify
+Input adapters -> Detect/classify -> Diagnose -> Resolve / seek evidence |
+ +-> Human approval +-> Core-system update -> Audit + notify
 ```
 
 ## Quick start
@@ -121,7 +119,9 @@ The included `IN-RBI-DEA` example uses *illustrative* timelines. Configure rules
 
 ## Architecture and coding standards
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component boundaries, controls, extension points, and coding standards. See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for the implementation-level workflow steps.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component boundaries, controls, extension points, and coding standards; [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for the role-by-role workflow; and [docs/AI_AGENTS_TECHNICAL.md](docs/AI_AGENTS_TECHNICAL.md) for agent logic, model boundaries, local persistence, and the PostgreSQL target contract.
+
+The browser UI is responsive: desktop and tablet retain efficient multi-column layouts, while phone layouts stack forms and dashboard metrics and make wide case tables horizontally scrollable.
 
 ## Commands
 
@@ -166,6 +166,10 @@ $env:DOCUMENT_AI_PROVIDER = "qwen"
 ```
 
 Set `DOCUMENT_AI_MODEL` to another approved model identifier or a local model path if needed. Qwen2.5-VL image-text generation is documented by [Hugging Face Transformers](https://huggingface.co/docs/transformers/model_doc/qwen2_5_vl); check the model card/license and customer-data requirements before downloading or deploying it.
+
+## KYC AI module
+
+`banking_agents/kyc_ai.py` adds a conservative India KYC decision layer. It checks consent, PAN format, Aadhaar checksum format, document-AI risk indicators, face-match thresholds, and the presence of approved external verification. It does **not** authenticate Aadhaar or PAN itself. RBI's KYC Direction requires, among other controls, issuer verification of PAN and approved Aadhaar/OVD, CKYCR, or V-CIP pathways as applicable. See the [RBI KYC Master Direction](https://systemhealth.rbi.org.in/Scripts/BS_ViewMasDirections.aspx_id%3D11566%282%29.html).
 
 ## Production integration checklist
 

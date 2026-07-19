@@ -120,3 +120,27 @@ To evolve this demo into a production-grade workflow system, the following shoul
 ## PostgreSQL production data contract
 
 `database/schema.sql` provides a PostgreSQL baseline for users/roles, loan applications, document metadata and AI outputs, workflow steps, approvals, dormant-account cases, outreach, and immutable audit events. Store document bytes in encrypted object storage; persist only an object key, content hash, model result, and retention metadata in PostgreSQL. The JSON and SQLite stores are local-demo adapters, not a production persistence design.
+
+## KYC AI control boundary
+
+`banking_agents/kyc_ai.py` is an AI-assisted KYC orchestration layer. It validates basic PAN/Aadhaar format, consumes document-AI risk results, and requires consent, issuer PAN verification, an authorised Aadhaar/OVD or CKYCR route, and V-CIP where appropriate. It deliberately cannot call UIDAI, CKYCR, PAN issuer, sanctions, or V-CIP services; those must be approved bank integrations. AI results can only route or flag cases, never establish identity by themselves.
+
+## AI agent and model catalog
+
+| Component | Module | What it does | Decision boundary |
+| --- | --- | --- | --- |
+| Loan Exception Agent | `loan_agent.py` | Diagnoses loan holds, requests evidence, retries verification, resolves narrow variances, and creates credit packages. | Cannot override policy or disburse funds. |
+| Dormancy Agent | `dormancy_agent.py` | Applies jurisdiction clocks, starts outreach, prepares transfer approvals, and executes only approved transfers/claims. | Cannot approve or execute unapproved money movement. |
+| Operations Automation Agent | `automation_agent.py` | Schedules specialist agents and reports human work queues. | Cannot bypass approval gates. |
+| Document Verification Model | `document_verification.py` | Applies product document requirements and identifies missing, pending, invalid, expired, or unreadable evidence. | Completeness only; not authenticity proof. |
+| Document AI Pipeline | `document_ai.py` | Provider interface for classification, OCR, field extraction, and tamper-risk signals. | Default provider returns `PENDING`; never identity proof. |
+| Qwen Vision Provider | `document_ai.py` | Optional local image-to-text document triage using Qwen2.5-VL. | Review suggestion only; no autonomous approval. |
+| India KYC AI Agent | `kyc_ai.py` | Combines consent, format checks, AI risk, face-match thresholds, sanctions, and external KYC prerequisites. | Requires authorised PAN/Aadhaar/OVD, CKYCR, and/or V-CIP checks before `VERIFIED`. |
+
+```text
+Customer event -> rules + AI triage -> evidence request / recommendation / exception
+               -> named human authority where policy, KYC, fraud, or money movement requires it
+               -> audited state update
+```
+
+No component in this repository is an autonomous authority for identity proof, policy override, customer-money movement, regulatory sign-off, or disbursement.

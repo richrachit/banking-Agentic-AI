@@ -7,7 +7,27 @@
 - In India, balances in inoperative/unclaimed deposit accounts for ten years or more are transferred to the RBI DEA Fund; the RBI also requires KYC-update availability for activation. [RBI 2025 amendment](https://www.rbi.org.in/Scripts/BS_CircularIndexDisplay.aspx?Id=12864)
 - RBI's UDGAM portal provides search across 30 banks. [UDGAM](https://systemhealth.rbi.org.in/udgam.rbi.org.in/index.html) A transferred balance remains claimable: the bank repays the customer and seeks an equivalent refund from the Fund, with tranche-level records retained. [DEA Fund Scheme](https://rbi.org.in/scripts/NotificationUser.aspx?Id=8907)
 
-## Implementation implications
+## Applied market patterns
+
+## Agent design research applied to this codebase
+
+The implementation follows the safest common enterprise pattern: narrow agents with deterministic controls and explicit escalation, rather than a single general-purpose agent acting on customer money.
+
+| Market / regulatory insight | Project implementation |
+| --- | --- |
+| Loan-document automation is valuable when it narrows manual review to exceptions. | `LoanExceptionAgent` and `DocumentVerificationModel` identify the exact evidence gap and route it. |
+| AI reliability does not justify unsupervised financial action. | Role checks, approval packages, and audit events gate deviations, transfer, claims, and review actions. |
+| Escheatment is primarily a jurisdiction and records problem. | `DormancyAgent` separates outreach, clock calculation, approval, execution, and reclaim. |
+| KYC requires authoritative checks, not image understanding alone. | `IndiaKycAIAgent` treats AI as triage and requires approved PAN/Aadhaar/OVD, CKYCR, sanctions, and V-CIP integrations. |
+| Document AI is useful for extraction and risk signals. | The provider interface supports approved OCR/VLM/fraud providers but defaults to `PENDING`. |
+
+## KYC research and regulatory design
+
+The RBI KYC Master Direction describes authorised identification pathways and controls, including PAN verification through the issuing authority, digital/offline Aadhaar or OVD verification where applicable, CKYCR retrieval, and V-CIP standards. It also requires secure infrastructure and controls for non-face-to-face onboarding. [RBI KYC Master Direction](https://systemhealth.rbi.org.in/Scripts/BS_ViewMasDirections.aspx_id%3D11566%282%29.html), [RBI master-directions index](https://old.rbi.org.in/commonman/English/Scripts/MasterDirection.aspx)
+
+This project intentionally does not treat an AI claim as proof that PAN/Aadhaar is authentic. Production onboarding must use contracted, authorised providers and a bank-approved KYC/AML policy, with legal/privacy review before face matching, biometric processing, sanctions screening, or model deployment.
+
+## Production implementation implications
 
 1. Treat AI scores as recommendations, never as authority to transfer funds, override credit policy, or reject a customer without an approved policy basis.
 2. Version every policy and model, retain model inputs/outputs and human decisions, and give users an explainable progression view.
