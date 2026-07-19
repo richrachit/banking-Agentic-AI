@@ -12,15 +12,16 @@ credit-bureau/KYC integrations.
 
 from dataclasses import asdict
 from datetime import date
-import html
 import os
 from pathlib import Path
 import re
 import secrets
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,7 +39,7 @@ from .dormancy_agent import DormancyAgent
 from .loan_agent import LoanExceptionAgent
 from .loan_origination import LoanOriginationService
 from .local_models import MODEL_COMPONENTS
-from .models import Account, LoanApplication
+from .models import Account, DormancyStatus, LoanApplication, LoanStatus
 from .policy import PolicyConfig
 from .progression import loan_progress
 from .repository import LocalRepository
@@ -50,42 +51,59 @@ class StrictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+UserRole = Literal["CUSTOMER", "LOAN", "CREDIT", "COMPLIANCE", "ADMIN"]
+SignupRole = Literal["CUSTOMER", "LOAN", "CREDIT", "COMPLIANCE"]
+SUPPORTED_DOCUMENT_TYPES = {
+    "PAN",
+    "AADHAAR",
+    "ADDRESS_PROOF",
+    "BANK_STATEMENT",
+    "INCOME_PROOF",
+    "SALARY_SLIP",
+    "EMPLOYMENT_PROOF",
+    "INCOME_TAX_RETURN",
+    "PROPERTY_DOCUMENT",
+    "BUSINESS_REGISTRATION",
+    "FINANCIAL_STATEMENT",
+}
+
+
 class LoginRequest(StrictRequest):
-    username: str
-    password: str
-    user_type: str
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+    user_type: UserRole
 
 
 class SignupRequest(StrictRequest):
-    username: str
-    password: str = Field(min_length=10)
-    display_name: str
-    email: str
-    user_type: str
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    password: str = Field(min_length=10, max_length=256)
+    display_name: str = Field(min_length=1, max_length=100)
+    email: str = Field(min_length=3, max_length=254)
+    user_type: SignupRole
 
 
 class LoanCreateRequest(StrictRequest):
-    applicant_name: str
-    date_of_birth: str
-    email: str
-    phone: str
-    residential_address: str
-    loan_product: str = "PERSONAL"
+    applicant_name: str = Field(min_length=1, max_length=120)
+    date_of_birth: date
+    email: str = Field(min_length=3, max_length=254)
+    phone: str = Field(min_length=7, max_length=20)
+    residential_address: str = Field(min_length=1, max_length=500)
+    loan_product: Literal["PERSONAL", "HOME", "BUSINESS"] = "PERSONAL"
     requested_amount: float = Field(gt=0)
     tenure_months: int = Field(gt=0)
-    loan_purpose: str
-    employment_type: str
-    employer_name: str = ""
+    loan_purpose: str = Field(min_length=1, max_length=500)
+    employment_type: Literal["SALARIED", "SELF_EMPLOYED", "BUSINESS_OWNER"]
+    employer_name: str = Field(default="", max_length=160)
     monthly_income: float = Field(gt=0)
-    pan_for_bureau_lookup: str
+    pan_for_bureau_lookup: str = Field(min_length=10, max_length=10)
     credit_bureau_consent: bool
     consent_version: str = "CREDIT_BUREAU_CONSENT_V1"
     uploaded_document_types: list[str] = Field(default_factory=list)
 
 
 class ApprovalDecisionRequest(StrictRequest):
-    decision: str
-    note: str = ""
+    decision: Literal["APPROVED", "REJECTED"]
+    note: str = Field(default="", max_length=1000)
 
 
 class ReactivationRequest(StrictRequest):
@@ -93,16 +111,16 @@ class ReactivationRequest(StrictRequest):
 
 
 class DormancyRunRequest(StrictRequest):
-    account_id: str
-    customer_id: str
-    jurisdiction: str = "IN-RBI-DEA"
+    account_id: str = Field(min_length=1, max_length=64)
+    customer_id: str = Field(min_length=1, max_length=64)
+    jurisdiction: str = Field(default="IN-RBI-DEA", min_length=1, max_length=64)
     balance: float = Field(ge=0)
-    last_customer_activity: str
-    as_of_date: str
+    last_customer_activity: date
+    as_of_date: date
 
 
 class AutomationRunRequest(StrictRequest):
-    as_of_date: str
+    as_of_date: date
 
 
 class ApiRuntime:
@@ -139,10 +157,32 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
+    configured_origins = os.getenv(
+        "BANKING_CORS_ORIGINS",
+        "http://localhost:8081,http://127.0.0.1:8081",
+    )
+    cors_origins = [
+        origin.strip()
+        for origin in configured_origins.split(",")
+        if origin.strip() and origin.strip() != "*"
+    ]
+    api.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        expose_headers=["X-Request-ID"],
+    )
 
     @api.middleware("http")
     async def request_context(request: Request, call_next):
-        request.state.request_id = request.headers.get("X-Request-ID") or f"req_{uuid4().hex}"
+        supplied_request_id = request.headers.get("X-Request-ID", "")
+        request.state.request_id = (
+            supplied_request_id
+            if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", supplied_request_id)
+            else f"req_{uuid4().hex}"
+        )
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         return response
@@ -158,6 +198,31 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
                 "title": detail,
                 "status": error.status_code,
                 "detail": detail,
+                "requestId": request.state.request_id,
+            },
+        )
+
+    @api.exception_handler(RequestValidationError)
+    async def validation_problem(request: Request, error: RequestValidationError):
+        # Do not echo Pydantic's `input` field: request bodies contain PAN,
+        # contact information, and credentials.
+        violations = [
+            {
+                "location": [str(part) for part in item.get("loc", ())],
+                "message": item.get("msg", "Invalid value."),
+                "type": item.get("type", "validation_error"),
+            }
+            for item in error.errors()
+        ]
+        return JSONResponse(
+            status_code=422,
+            media_type="application/problem+json",
+            content={
+                "type": "https://local.banking-ai/problems/request-validation",
+                "title": "Request validation failed.",
+                "status": 422,
+                "detail": "One or more request fields are invalid.",
+                "violations": violations,
                 "requestId": request.state.request_id,
             },
         )
@@ -178,14 +243,27 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
             raise HTTPException(403, "The authenticated role is not authorised for this action.")
 
     def owned_loan(repository: LocalRepository, application_id: str, current: AuthenticatedUser) -> LoanApplication:
+        allow(current, "CUSTOMER", "LOAN", "CREDIT", "ADMIN")
         try:
             loan = repository.get_loan(application_id)
         except KeyError as error:
             raise HTTPException(404, "Loan application was not found.") from error
         if current.role == "CUSTOMER" and loan.submitted_by != current.username:
             raise HTTPException(404, "Loan application was not found.")
-        allow(current, "CUSTOMER", "LOAN", "CREDIT", "COMPLIANCE", "ADMIN")
         return loan
+
+    def scoped_approvals(current: AuthenticatedUser, items: list[Any]) -> list[Any]:
+        if current.role == "CREDIT":
+            return [item for item in items if item.required_role == "credit.manager"]
+        if current.role == "COMPLIANCE":
+            return [item for item in items if item.required_role == "compliance.officer"]
+        if current.role == "LOAN":
+            return [
+                item
+                for item in items
+                if item.kind in {"LOAN_DEVIATION", "CREDIT_SCORE_REVIEW", "CREDIT_BUREAU_UNAVAILABLE"}
+            ]
+        return items
 
     @api.get("/api/v1/health", tags=["System"])
     def health(request: Request):
@@ -243,10 +321,15 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
             loans = [item for item in loans if item.submitted_by == current.username]
             accounts = [item for item in accounts if item.customer_id == current.customer_id]
             approvals = []
+        elif current.role == "LOAN":
+            accounts = []
+            approvals = scoped_approvals(current, approvals)
         elif current.role == "CREDIT":
-            approvals = [item for item in approvals if item.required_role == "credit.manager"]
+            accounts = []
+            approvals = scoped_approvals(current, approvals)
         elif current.role == "COMPLIANCE":
-            approvals = [item for item in approvals if item.required_role == "compliance.officer"]
+            loans = []
+            approvals = scoped_approvals(current, approvals)
         return response(
             request,
             {
@@ -268,14 +351,20 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
             raise HTTPException(422, "Credit-bureau consent is required before submission.")
         repository, _, _, _, origination = runtime.services()
         application_id = repository.generate_application_id()
-        evidence = {name.upper().strip(): "PENDING" for name in payload.uploaded_document_types}
+        if payload.date_of_birth >= date.today():
+            raise HTTPException(422, "date_of_birth must be in the past.")
+        normalized_document_types = {name.upper().strip() for name in payload.uploaded_document_types}
+        unsupported_document_types = normalized_document_types - SUPPORTED_DOCUMENT_TYPES
+        if unsupported_document_types:
+            raise HTTPException(422, "One or more uploaded document types are unsupported.")
+        evidence = {name: "PENDING" for name in normalized_document_types}
         loan = LoanApplication(
             application_id,
             "MISSING_DOCUMENT",
             loan_product=payload.loan_product.upper(),
             relationship_manager="customer-self-service",
             applicant_name=payload.applicant_name,
-            date_of_birth=payload.date_of_birth,
+            date_of_birth=payload.date_of_birth.isoformat(),
             email=payload.email,
             phone=payload.phone,
             residential_address=payload.residential_address,
@@ -290,7 +379,12 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
             submitted_by=current.username,
         )
         try:
-            output = origination.submit(loan, payload.pan_for_bureau_lookup, payload.credit_bureau_consent)
+            output = origination.submit(
+                loan,
+                payload.pan_for_bureau_lookup,
+                payload.credit_bureau_consent,
+                payload.consent_version,
+            )
         except CreditScoreUnavailable as error:
             raise HTTPException(422, str(error)) from error
         except ValueError as error:
@@ -299,7 +393,7 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
 
     @api.get("/api/v1/loan-applications", tags=["Loans"])
     def list_loans(request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "CUSTOMER", "LOAN", "CREDIT", "COMPLIANCE", "ADMIN")
+        allow(current, "CUSTOMER", "LOAN", "CREDIT", "ADMIN")
         repository, _, _, _, _ = runtime.services()
         loans = repository.list_loans()
         if current.role == "CUSTOMER":
@@ -326,15 +420,26 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         repository, audit, _, _, _ = runtime.services()
         loan = owned_loan(repository, application_id, current)
         allow(current, "CUSTOMER", "LOAN", "ADMIN")
-        normalized_type = re.sub(r"[^A-Z0-9_]", "_", document_type.upper().strip())
-        if not normalized_type:
-            raise HTTPException(422, "Document type is required.")
+        normalized_type = document_type.upper().strip()
+        if normalized_type not in SUPPORTED_DOCUMENT_TYPES:
+            raise HTTPException(422, "Document type is unsupported.")
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in {".pdf", ".png", ".jpg", ".jpeg"}:
             raise HTTPException(422, "Document must be PDF, PNG, or JPG.")
-        content = await file.read(10 * 1024 * 1024 + 1)
+        try:
+            content = await file.read(10 * 1024 * 1024 + 1)
+        finally:
+            await file.close()
         if not content or len(content) > 10 * 1024 * 1024:
             raise HTTPException(422, "Document must be non-empty and no larger than 10 MB.")
+        signatures_match = {
+            ".pdf": content.startswith(b"%PDF-"),
+            ".png": content.startswith(b"\x89PNG\r\n\x1a\n"),
+            ".jpg": content.startswith(b"\xff\xd8\xff"),
+            ".jpeg": content.startswith(b"\xff\xd8\xff"),
+        }
+        if not signatures_match[suffix]:
+            raise HTTPException(422, "Document content does not match its file extension.")
         safe_application = re.sub(r"[^A-Za-z0-9_-]", "_", application_id)
         target = data_path / "uploads" / safe_application
         target.mkdir(parents=True, exist_ok=True)
@@ -359,9 +464,7 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         allow(current, "LOAN", "CREDIT", "COMPLIANCE", "ADMIN")
         repository, _, _, _, _ = runtime.services()
         items = repository.list_approvals()
-        required = {"CREDIT": "credit.manager", "COMPLIANCE": "compliance.officer"}.get(current.role)
-        if required:
-            items = [item for item in items if item.required_role == required]
+        items = scoped_approvals(current, items)
         return response(request, [asdict(item) for item in items])
 
     @api.post("/api/v1/approvals/{approval_id}/decision", tags=["Approvals"])
@@ -380,16 +483,69 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         role_authority = {"CREDIT": "credit.manager", "COMPLIANCE": "compliance.officer", "ADMIN": approval.required_role}[current.role]
         if approval.required_role != role_authority:
             raise HTTPException(403, f"This approval requires {approval.required_role}.")
-        decision = payload.decision.upper()
-        if decision not in {"APPROVED", "REJECTED"}:
-            raise HTTPException(422, "Decision must be APPROVED or REJECTED.")
+        if approval.status != "PENDING":
+            raise HTTPException(409, "Approval has already been decided.")
+        decision = payload.decision
+        if decision == "REJECTED" and not payload.note.strip():
+            raise HTTPException(422, "A decision note is required when rejecting an approval.")
         approval.status = decision
         approval.decision_by = current.username
         approval.decision_note = payload.note
         repository.save_approval(approval)
         audit.write(current.username, "approval.decided", approval.entity_id, decision, {"approval_id": approval_id})
+        updated_entity: dict[str, Any] | None = None
+        if approval.kind in {"CREDIT_SCORE_REVIEW", "CREDIT_BUREAU_UNAVAILABLE"}:
+            updated_entity = asdict(
+                origination.continue_after_credit_review(
+                    approval.entity_id,
+                    decision == "APPROVED",
+                    payload.note or "Credit Manager declined continuation.",
+                )
+            )
+        elif approval.kind == "LOAN_DEVIATION":
+            if decision == "APPROVED":
+                updated_entity = asdict(loan_agent.apply_approved_deviation(approval.entity_id))
+            else:
+                updated_entity = asdict(
+                    loan_agent.reject_application(approval.entity_id, payload.note)
+                )
+        elif approval.kind == "ACCOUNT_REACTIVATION" and decision == "APPROVED":
+            account = repository.get_account(approval.entity_id)
+            account.status = DormancyStatus.ACTIVE.value
+            account.outreach_sent = False
+            account.dormant_on = None
+            account.transfer_due_on = None
+            account.last_customer_activity = date.today().isoformat()
+            repository.save_account(account)
+            for pending in repository.list_approvals():
+                if (
+                    pending.entity_id == account.account_id
+                    and pending.kind == "UNCLAIMED_TRANSFER"
+                    and pending.status == "PENDING"
+                ):
+                    pending.status = "REJECTED"
+                    pending.decision_by = current.username
+                    pending.decision_note = "Cancelled because account reactivation was approved."
+                    repository.save_approval(pending)
+            audit.write(current.username, "dormancy.account_reactivated", account.account_id, "SUCCESS", {"approval_id": approval_id})
+            updated_entity = asdict(account)
+        elif approval.kind == "UNCLAIMED_TRANSFER" and decision == "REJECTED":
+            account = repository.get_account(approval.entity_id)
+            if account.status == DormancyStatus.TRANSFER_PENDING.value:
+                account.status = DormancyStatus.DORMANT.value
+                repository.save_account(account)
+                updated_entity = asdict(account)
         transfers = dormancy_agent.execute_approved_transfers() if decision == "APPROVED" and approval.kind == "UNCLAIMED_TRANSFER" else []
-        return response(request, {"approval": asdict(approval), "executedTransfers": [asdict(item) for item in transfers]})
+        claims = dormancy_agent.execute_approved_claims() if decision == "APPROVED" and approval.kind == "CUSTOMER_RECLAIM" else []
+        return response(
+            request,
+            {
+                "approval": asdict(approval),
+                "updatedEntity": updated_entity,
+                "executedTransfers": [asdict(item) for item in transfers],
+                "executedClaims": [asdict(item) for item in claims],
+            },
+        )
 
     @api.get("/api/v1/accounts", tags=["Dormant accounts"])
     def accounts(request: Request, current: AuthenticatedUser = Depends(identity)):
@@ -417,6 +573,12 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
             raise HTTPException(404, "Account was not found.")
         if not payload.kyc_confirmed:
             raise HTTPException(422, "Current KYC confirmation is required.")
+        if account.status not in {
+            DormancyStatus.OUTREACH.value,
+            DormancyStatus.DORMANT.value,
+            DormancyStatus.TRANSFER_PENDING.value,
+        }:
+            raise HTTPException(409, "Only inactive or dormant accounts can be reactivated.")
         from .models import Approval
 
         approval = repository.create_approval(
@@ -435,24 +597,26 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
     def run_dormancy(payload: DormancyRunRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
         allow(current, "COMPLIANCE", "ADMIN")
         repository, _, _, dormancy_agent, _ = runtime.services()
-        account = Account(payload.account_id, payload.customer_id, payload.jurisdiction, payload.balance, payload.last_customer_activity)
+        if payload.jurisdiction not in PolicyConfig().dormancy_days_by_jurisdiction:
+            raise HTTPException(422, "Jurisdiction is not configured in the active dormancy policy.")
+        if payload.last_customer_activity > payload.as_of_date:
+            raise HTTPException(422, "last_customer_activity cannot be after as_of_date.")
+        account = Account(
+            payload.account_id,
+            payload.customer_id,
+            payload.jurisdiction,
+            payload.balance,
+            payload.last_customer_activity.isoformat(),
+        )
         repository.save_account(account)
-        try:
-            as_of = date.fromisoformat(payload.as_of_date)
-        except ValueError as error:
-            raise HTTPException(422, "as_of_date must be YYYY-MM-DD.") from error
-        result = next(item for item in dormancy_agent.run(as_of) if item.account_id == account.account_id)
+        result = next(item for item in dormancy_agent.run(payload.as_of_date) if item.account_id == account.account_id)
         return response(request, asdict(result))
 
     @api.post("/api/v1/automation/cycles", tags=["Automation"])
     def run_automation(payload: AutomationRunRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
         allow(current, "LOAN", "COMPLIANCE", "ADMIN")
         repository, audit, loan_agent, dormancy_agent, _ = runtime.services()
-        try:
-            as_of = date.fromisoformat(payload.as_of_date)
-        except ValueError as error:
-            raise HTTPException(422, "as_of_date must be YYYY-MM-DD.") from error
-        result = OperationsAutomationAgent(repository, audit, loan_agent, dormancy_agent).run_cycle(as_of)
+        result = OperationsAutomationAgent(repository, audit, loan_agent, dormancy_agent).run_cycle(payload.as_of_date)
         return response(request, asdict(result))
 
     @api.get("/api/v1/ai/models", tags=["AI governance"])

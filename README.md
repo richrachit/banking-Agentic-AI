@@ -1,163 +1,180 @@
-# Banking Operations Resolution Agents
+# Banking Operations Agentic AI Platform
 
-A local, dependency-free reference implementation for two bank-operations agents:
+A local reference application for two expensive, exception-heavy banking operations workflows:
 
-- **Loan Exception Resolution Agent**: investigates stalled applications, obtains missing evidence, retries checks, resolves permitted exceptions, and creates approval cases for deviations.
-- **Dormant Account & Unclaimed Balance Agent**: identifies accounts nearing dormancy, drives re-engagement, classifies dormant accounts, manages statutory timelines, prepares DEA-style transfers, and supports customer claims.
+1. **Loan-processing exception resolution.** Applications often stop because evidence is missing or inconsistent, verification fails, or a requested decision falls outside policy. The platform diagnoses the hold, requests specific evidence, retries permitted checks, routes deviations to the correct human authority, and returns resolved cases to the main loan journey.
+2. **Dormant accounts and unclaimed balances.** Outreach, inactivity clocks, classification, transfer preparation, compliance approval, and later customer claims are coordinated through a jurisdiction-aware, auditable workflow.
 
-> This is a workflow and integration reference, not a production banking system. Production deployment requires approved integrations, identity/consent controls, encryption, segregation of duties, regulator-approved rules, and legal/compliance validation for each jurisdiction.
+The repository combines a responsive multi-persona browser app, a versioned FastAPI backend for web/mobile clients, command-line workflow tools, explainable deterministic agents, optional document AI, and a governed local advisory-model training pipeline.
 
-## What runs locally
+> **Reference implementation only.** This code does not connect to TransUnion CIBIL, RBI/DEA filing, UIDAI, CKYCR, a loan origination system, core banking, payments, eSign, sanctions screening, or a production identity provider. It must not be used to make live credit, KYC, regulatory, or customer-money decisions without approved integrations, legal/compliance validation, model-risk governance, security controls, and maker-checker authorization.
 
-The CLI persists its state to `data/state.json` and emits an append-only audit log to `data/audit.jsonl`. It uses deterministic policy rules and deliberately keeps money movement and policy deviations behind a human approval gate.
+## What the project implements
 
-### Code-to-feature map
+| Capability | Current implementation | Production boundary |
+| --- | --- | --- |
+| Customer loan application | Server-generated application ID, applicant/financial fields, product document metadata, separate uploads | LOS/customer master integration, field validation, privacy/retention controls |
+| Credit-bureau step | Explicit-consent gate plus fictional local CIBIL-style fixture provider | Authorised bureau membership/API, consent evidence, idempotency, reconciliation |
+| Score routing | `<650` local demo rejection, `650–749` Credit Manager review, `>=750` continues workflow, no-history review | Bank-approved/versioned policy; explainability, review and dispute path |
+| Loan exception agent | Missing-document diagnosis, transient retry, income-variance resolution/approval package | LOS, DMS/OCR, KYC, fraud, affordability and notification adapters |
+| Document review | Product requirement rules, upload status, baseline provider, optional Qwen visual triage | Malware scan, authenticity/fraud models, issuer verification, human QA |
+| KYC orchestration | Consent/format/risk/prerequisite checks in `IndiaKycAIAgent` | Approved PAN/Aadhaar/OVD/CKYCR/V-CIP/sanctions integrations |
+| Dormant-account lifecycle | Outreach, dormancy clocks, transfer package/approval, transfer/claim state machine | Current jurisdiction rules, actual communications, filing, ledger and reconciliation adapters |
+| Human approvals | Credit, compliance and claims approval records with audit events | Enterprise workflow, segregation of duties, delegated authority, immutable evidence |
+| Local ML | Two de-identified scikit-learn advisory classifiers and ten-component registry | Independently validated data/model governance and production serving |
+| Persistence | JSON state/audit plus capability-specific SQLite stores | PostgreSQL repositories, encrypted object storage, WORM audit store |
 
-- `banking_agents/web_app.py` — browser UI, role-based login, loan review dashboard, approve/reject/reopen actions, and application detail view.
-- `banking_agents/loan_agent.py` — loan exception processing, document review routing, approval handling, and loan reopen/reject workflow.
-- `banking_agents/dormancy_agent.py` — dormant-account lifecycle, transfer approvals, and claim handling.
-- `banking_agents/repository.py` — local persistence layer for loans, accounts, approvals, and workflow state.
-- `banking_agents/audit.py` — append-only audit trail for all workflow decisions.
-- `banking_agents/document_verification.py` — explainable document-rule engine for product-specific document checks.
-- `banking_agents/document_ai.py` — optional AI-powered document triage pipeline.
+## Personas
+
+- **Customer:** signs up/signs in, submits a loan and consent, uploads product-specific documents, follows application progression, views owned accounts, and requests dormant-account reactivation.
+- **Loan Operations:** reviews loan exceptions, supplies evidence, runs the exception agent, and monitors unresolved work.
+- **Credit Manager:** reviews credit-score and policy-deviation packages and records an authorised decision.
+- **Compliance Officer:** manages dormant-account lifecycle cases, transfer approvals, and reactivation/claim controls.
+- **Administrator:** sees cross-system status and local model governance. Production administration must not bypass business approval roles.
+
+## End-to-end loan flow
 
 ```text
-Input adapters -> Detect/classify -> Diagnose -> Resolve / seek evidence |
- +-> Human approval +-> Core-system update -> Audit + notify
+Customer submits application and explicit bureau consent
+  -> repository generates application ID
+  -> Credit Bureau Agent fetches authorised/local-fixture signal
+       low demo band -> explainable rejection + review/dispute wording
+       intermediate/no history -> Credit Manager approval queue
+       high band -> continue (not an approval)
+  -> document/data validation and exception diagnosis
+       missing/invalid evidence -> customer request
+       transient verification -> permitted retry
+       in-policy variance -> return to normal journey
+       policy deviation -> Credit Manager package
+  -> normal LOS/eSign/disbursement boundary (not implemented)
 ```
 
-## Quick start
+The score band does not approve a loan. It is one input before document, KYC, affordability, fraud, policy, and human-authority controls. The configured cutoffs are illustrative bank policy, not CIBIL or RBI thresholds. CIBIL describes a 300–900 score range and higher scores as lower credit risk; see the [CIBIL score FAQ](https://www.cibil.com/faq/understand-your-credit-score-and-report). RBI's [Digital Lending Directions, 2025](https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12848&Mode=0) require need-based data collection with prior explicit consent and an audit trail, among other controls.
 
-Requirements: Python 3.11+ (no package install required).
+## End-to-end dormant-account flow
+
+```text
+Scheduled assessment
+  -> approaching inactivity threshold: recorded multi-channel outreach
+  -> policy threshold: dormant classification and transfer clock
+  -> due date: unclaimed-balance/DEA-style package
+  -> Compliance Officer approval
+  -> transfer adapter and reconciliation boundary
+  -> claim-ready record
+  -> validated later customer claim with approval
+```
+
+The included `IN-RBI-DEA` dates are illustrative configuration. Compliance must verify and version the applicable rule before use.
+
+## Architecture at a glance
+
+```text
+Responsive browser UI          JSON clients
+`web_app.py`                   FastAPI `/api/v1`
+          \                      /
+           \-- application services --/
+                 |
+                 +-- CreditBureauDecisionAgent
+                 +-- LoanExceptionAgent -- document/KYC providers
+                 +-- DormancyAgent
+                 +-- OperationsAutomationAgent
+                 |
+                 +-- LocalRepository + AuditLog + SQLite case/model stores
+                                      |
+                                      +-- PostgreSQL target schema (not active)
+```
+
+Important modules:
+
+- `banking_agents/api_app.py` — role-secured FastAPI surface and generated OpenAPI.
+- `banking_agents/web_app.py` — responsive multi-persona local browser application.
+- `banking_agents/loan_origination.py` — shared application submission, bureau assessment, and exception-workflow handoff.
+- `banking_agents/credit_bureau_agent.py` — provider contract, fictional local fixture database, and score policy routing.
+- `banking_agents/loan_agent.py` — loan exception resolution and credit-deviation approvals.
+- `banking_agents/dormancy_agent.py` — dormancy, transfer, reactivation, and claim lifecycle.
+- `banking_agents/document_verification.py`, `document_ai.py`, `kyc_ai.py` — document/KYC control layers.
+- `banking_agents/local_models.py`, `training_store.py` — advisory model features, training, artifact validation, and registry.
+- `database/schema.sql` — PostgreSQL target contract; the running demo does not use it yet.
+
+## Requirements
+
+- Python 3.11 or newer.
+- PowerShell examples below assume Windows.
+- Docker Desktop is optional and used only to inspect the PostgreSQL target schema.
+- The browser/CLI workflow uses the Python standard library. FastAPI, training, PostgreSQL, and Qwen capabilities have separate requirements files.
+
+## Local setup
+
+From `D:\Agentic Ai`:
 
 ```powershell
-cd "D:\Agentic Ai"
-python -m banking_agents seed-demo
-python -m banking_agents run-loan --application-id LN-1001
-python -m banking_agents run-loan --application-id LN-1002
-python -m banking_agents decide --approval-id APR-0001 --actor credit.manager --approve
-python -m banking_agents run-dormancy --as-of 2026-07-15
-python -m banking_agents decide --approval-id APR-0002 --actor compliance.officer --approve
-python -m banking_agents execute-transfers
-python -m banking_agents request-claim --account-id AC-2001 --claim-id CLM-001 --validated
-python -m banking_agents decide --approval-id APR-0003 --actor claims.officer --approve
-python -m banking_agents execute-claims
-python -m banking_agents list-events
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-api.txt -r requirements-training.txt
+.\.venv\Scripts\python.exe -m banking_agents seed-demo
+.\.venv\Scripts\python.exe scripts\seed_credit_bureau_demo.py
 ```
 
-## Three-user browser application
+Generated local state is written under `data/` and is excluded from new Git tracking. Do not use real customer identifiers or documents in the demo.
 
-Start the local application and open `http://127.0.0.1:8000` in a browser:
+## Run the applications
+
+### Browser application
 
 ```powershell
 .\.venv\Scripts\python.exe -m banking_agents.web_app
 ```
 
-It has separate forms for **Loan Operations**, **Credit Manager**, and **Compliance Officer**. Each user submits their details and the resulting workflow status and approval queue are displayed immediately. This is a local demo UI; production authentication must use the bank identity provider and enforce roles server-side.
+Open `http://127.0.0.1:8000`.
 
-### Agentic automation
+### JSON API
 
-The **Agentic AI Automation Controller** runs the operational cycle without an operator having to process each record: it scans all open cases, delegates loan exceptions to the loan specialist, runs dormancy lifecycle checks, applies already-approved decisions, and records each action. It is intentionally constrained by policy: only the Credit Manager can approve a loan deviation and only the Compliance Officer can approve an unclaimed-balance transfer.
-
-### Loan document verification model
-
-For a `MISSING_DOCUMENT` loan exception, the application now checks the required document set by product and requests the exact outstanding item. Supported products and base requirements are:
-
-| Product | Required documents |
-| --- | --- |
-| Personal | PAN, Aadhaar, address proof, bank statement, income proof |
-| Home | Personal requirements plus property document |
-| Business | PAN, Aadhaar, business registration, bank statement, financial statement |
-
-In the browser form, enter evidence as `DOCUMENT:STATUS`, for example `PAN:VALID,AADHAAR:EXPIRED`. Accepted statuses are `VALID`, `PENDING`, `INVALID`, `EXPIRED`, and `UNREADABLE`. The model is an explainable completeness/status rules engine; it is not a replacement for a regulated document-authenticity, OCR, KYC, or fraud model.
-
-Run a cycle from the command line:
+In another terminal:
 
 ```powershell
-.\.venv\Scripts\python.exe -m banking_agents run-automation --as-of 2026-07-15
+.\.venv\Scripts\python.exe -m uvicorn banking_agents.api_app:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-After approving `APR-0001`, run `run-loan` again to apply the approved deviation and return the loan application to the main journey.
+Open `http://127.0.0.1:8001/docs`. See [docs/API.md](docs/API.md) for endpoint roles, payloads, response/error envelopes, CIBIL-style routing, and production gaps.
 
-## Workflows
+For an Android emulator, a client commonly reaches the host as `10.0.2.2`; a physical device needs the development computer's LAN address and an intentionally exposed/listening API. Do not expose this unauthenticated-development topology to an untrusted network.
 
-### 1. Loan exception resolution
-
-```text
-LOS exception
-  -> classify (document / verification / policy deviation)
-  -> diagnose from documents and verification results
-  -> request missing item OR retry a transient check
-  -> auto-resolve only if policy permits
-  -> otherwise create an approval package
-  -> apply approved decision to LOS
-  -> notify customer / relationship manager and write audit event
-```
-
-Supported demo cases:
-
-| Exception | Agent action |
-| --- | --- |
-| `MISSING_DOCUMENT` | Requests the exact document and records the customer task. |
-| `VERIFY_TRANSIENT_FAILURE` | Re-executes verification; succeeds on the configured retry. |
-| `INCOME_VARIANCE` | Auto-resolves when within tolerance; otherwise creates a credit approval package. |
-
-### 2. Dormancy and unclaimed balance lifecycle
-
-```text
-Active account approaching threshold
-  -> schedule multi-channel re-engagement
-  -> classify dormant at policy threshold
-  -> calculate transfer due date by jurisdiction
-  -> prepare transfer package once due
-  -> compliance approval
-  -> execute ledger transfer and retain claim record
-  -> validate and pay later customer claims (approval required)
-```
-
-The included `IN-RBI-DEA` example uses *illustrative* timelines. Configure rules only after compliance confirms the governing law and bank policy.
-
-## Architecture and coding standards
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component boundaries, controls, extension points, and coding standards; [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for the role-by-role workflow; and [docs/AI_AGENTS_TECHNICAL.md](docs/AI_AGENTS_TECHNICAL.md) for agent logic, model boundaries, local persistence, and the PostgreSQL target contract.
-
-The browser UI is responsive: desktop and tablet retain efficient multi-column layouts, while phone layouts stack forms and dashboard metrics and make wide case tables horizontally scrollable.
-
-## Commands
+## Run the command-line workflows
 
 ```powershell
-python -m banking_agents --help
-python -m banking_agents reset-demo             # removes only generated local data
-python -m banking_agents list-approvals
-python -m banking_agents list-events
-python -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m banking_agents --help
+.\.venv\Scripts\python.exe -m banking_agents run-loan --application-id LN-1001
+.\.venv\Scripts\python.exe -m banking_agents run-automation --as-of 2026-07-20
+.\.venv\Scripts\python.exe -m banking_agents list-approvals
+.\.venv\Scripts\python.exe -m banking_agents list-events
 ```
 
-Run tests from the project root with the module command above. Do **not** run `python tests/test_workflows.py` directly, because that makes the `tests` folder the import root and causes `ModuleNotFoundError: banking_agents`. In VS Code, select **Debug workflow tests** from the Run and Debug panel; the project includes `.vscode/launch.json` with the correct working directory.
+`seed-demo` and `reset-demo` both replace the local demo loan/account state and clear the local audit file. Do not use those commands against data you intend to retain.
 
-## Local setup steps
+## Build and exercise the local advisory models
 
-1. Install Python 3.11 or newer and ensure `python --version` works in PowerShell.
-2. Copy this project to a local folder and open PowerShell in that folder.
-3. Run `python -m banking_agents seed-demo` to initialize sample applications, accounts, and policies.
-4. Run the Quick start commands above.
-5. Inspect `data/state.json` and `data/audit.jsonl` to see persisted workflow state and immutable-style audit events.
-6. Replace the JSON repositories in `banking_agents/repository.py` with LOS, core-banking, CRM, document, verification, and payment adapters before connecting real systems.
-
-## PostgreSQL deployment foundation
-
-The current browser demo uses local JSON for simplicity. The production data contract is in `database/schema.sql` and covers users, applications, documents, workflow progression, approvals, dormant-account cases, outreach, and immutable audit events.
+The project catalogs ten AI/control components. Only `loan_exception_resolution_advisory` and `document_review_advisory` are locally trainable. Both are advisory and are not wired into automatic credit decisions.
 
 ```powershell
-docker compose up -d postgres
-.\.venv\Scripts\python.exe -m pip install -r requirements-postgres.txt
+# Collect available de-identified local labels and catalog all components
+.\.venv\Scripts\python.exe scripts\build_training_database.py
+
+# Add generated positive/negative fixtures strictly for pipeline testing
+.\.venv\Scripts\python.exe scripts\build_training_database.py --include-synthetic-demo
+
+# Exercise training on the synthetic demo set
+.\.venv\Scripts\python.exe scripts\train_local_models.py --allow-synthetic-demo
+
+# Inspect catalog, data counts, provenance, metrics, and artifact hashes
+.\.venv\Scripts\python.exe scripts\model_status.py
+
+# Advisory score only; source loan state is not changed
+.\.venv\Scripts\python.exe scripts\score_local_model.py --application-id LN-1002
 ```
 
-Use this schema as the migration baseline; do not copy demo credentials or local-file document storage into a production environment. See [research and implementation guidance](docs/RESEARCH.md).
+Normal training fails closed unless each trainable model has at least 20 human-verified positive and 20 human-verified negative labels. Synthetic/weak-label accuracy is not production validation. See [docs/MODEL_TRAINING.md](docs/MODEL_TRAINING.md).
 
-## Optional local document-AI model
-
-The app includes an optional Qwen2.5-VL vision-language provider for image document triage. It requires substantial disk/RAM and benefits from a GPU. It only produces a review suggestion and never automatically approves a document.
+## Optional local document-vision provider
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-ai.txt
@@ -165,18 +182,58 @@ The app includes an optional Qwen2.5-VL vision-language provider for image docum
 $env:DOCUMENT_AI_PROVIDER = "qwen"
 ```
 
-Set `DOCUMENT_AI_MODEL` to another approved model identifier or a local model path if needed. Qwen2.5-VL image-text generation is documented by [Hugging Face Transformers](https://huggingface.co/docs/transformers/model_doc/qwen2_5_vl); check the model card/license and customer-data requirements before downloading or deploying it.
+The optional Qwen2.5-VL provider can classify/extract visual document observations for review. It can require substantial hardware and disk, and its output always remains a suggestion; it cannot authenticate identity or approve a loan. Review the model card/licence and organizational data controls before download or use.
 
-## KYC AI module
+## PostgreSQL target schema
 
-`banking_agents/kyc_ai.py` adds a conservative India KYC decision layer. It checks consent, PAN format, Aadhaar checksum format, document-AI risk indicators, face-match thresholds, and the presence of approved external verification. It does **not** authenticate Aadhaar or PAN itself. RBI's KYC Direction requires, among other controls, issuer verification of PAN and approved Aadhaar/OVD, CKYCR, or V-CIP pathways as applicable. See the [RBI KYC Master Direction](https://systemhealth.rbi.org.in/Scripts/BS_ViewMasDirections.aspx_id%3D11566%282%29.html).
+The active demo uses local files. `database/schema.sql` is a migration/design baseline for application, document, bureau consent/enquiry/decision, workflow, approval, dormant account, outreach, audit, and AI governance records.
 
-## Production integration checklist
+```powershell
+docker compose up -d postgres
+.\.venv\Scripts\python.exe -m pip install -r requirements-postgres.txt
+```
 
-- Use API adapters with mTLS/OAuth, least-privilege service identities, idempotency keys, and retry/dead-letter handling.
-- Store audit evidence in WORM/immutable storage; do not rely on the local JSON log.
-- Keep rules versioned, approved, jurisdiction-scoped, and tested before activation.
-- Require maker-checker approval for deviations, filings, transfers, and claims.
-- Encrypt sensitive data, tokenize documents, enforce consent and retention/deletion schedules.
-- Reconcile transfer batches with the general ledger and regulator acknowledgements.
-  ea8f23d (feat: Implement document AI pipeline for loan-document verification)
+Starting PostgreSQL does not switch the application repository. A PostgreSQL repository/transaction adapter still needs to be implemented. Change the Compose password before any environment beyond an isolated workstation.
+
+## Tests and debugger
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Run tests as a module from the project root. Directly running `python tests\test_workflows.py` changes the import root and can produce `ModuleNotFoundError: banking_agents`. VS Code launch settings are under `.vscode/launch.json`; select the project-root workflow test configuration and ensure the `.venv` interpreter is active.
+
+## Current local persistence
+
+| Store | Purpose |
+| --- | --- |
+| `data/state.json` | Loan, account, approval, and workflow state |
+| `data/audit.jsonl` | Append-only-style local workflow events |
+| `data/users.json` | PBKDF2-hashed local registrations |
+| `data/credit_bureau.sqlite3` | Fictional HMAC-keyed score fixtures and lookup audit |
+| `data/loan_exception_cases.sqlite3` | Loan exception/document case history |
+| `data/dormancy_cases.sqlite3` | Dormancy/outreach/filing case history |
+| `data/model_training.sqlite3` | Model catalog, examples, runs, and advisory predictions |
+| `data/models/` | Hash-registered local joblib artifacts |
+| `data/uploads/` | Unencrypted local uploaded files; development only |
+
+## Documentation
+
+- [API reference](docs/API.md)
+- [Workflow reference](docs/WORKFLOWS.md)
+- [Architecture and coding standards](docs/ARCHITECTURE.md)
+- [AI agent technical reference](docs/AI_AGENTS_TECHNICAL.md)
+- [Local model training and governance](docs/MODEL_TRAINING.md)
+- [Code/module map](docs/CODE_DOCUMENTATION.md)
+- [Research notes](docs/RESEARCH.md)
+
+## Non-negotiable production controls
+
+- Purpose-specific, revocable customer consent and a defensible audit trail for bureau/KYC data access.
+- Enterprise identity, MFA, least privilege, row/entity authorization, and maker-checker segregation.
+- Encryption in transit/at rest, approved secrets management, PII minimization, retention/deletion, and India data-location review.
+- Versioned policy/model/provider configuration, reproducible decision evidence, independent validation, monitoring, and rollback.
+- Idempotent, reconciled LOS/core/payment/regulatory integrations with retry, timeout, dead-letter, and human fallback.
+- Explainable adverse decisions plus authorised reconsideration, data-correction, complaint, and dispute handling.
+- No autonomous disbursement, unclaimed-balance transfer, customer claim payment, KYC verification, or regulatory sign-off.
+

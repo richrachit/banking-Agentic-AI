@@ -37,7 +37,15 @@ class CreditScoreResult:
 
 
 class CreditBureauProvider(Protocol):
-    def fetch_score(self, pan: str, consent_recorded: bool, application_id: str) -> CreditScoreResult: ...
+    def fetch_score(
+        self,
+        pan: str,
+        consent_recorded: bool,
+        application_id: str,
+        *,
+        consent_version: str,
+        consent_purpose: str,
+    ) -> CreditScoreResult: ...
 
 
 class LocalCreditBureauDatabase:
@@ -81,12 +89,29 @@ class LocalCreditBureauDatabase:
                     provider TEXT NOT NULL,
                     bureau_reference TEXT NOT NULL,
                     consent_recorded INTEGER NOT NULL,
+                    consent_version TEXT NOT NULL DEFAULT '',
+                    consent_purpose TEXT NOT NULL DEFAULT '',
                     checked_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS ix_credit_check_application
                     ON credit_score_check(application_id, checked_at);
                 """
             )
+            # Keep existing local databases usable after consent evidence was
+            # added. SQLite cannot add both columns in the CREATE statement to
+            # an already-created table, so migrate them explicitly.
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(credit_score_check)").fetchall()
+            }
+            if "consent_version" not in columns:
+                connection.execute(
+                    "ALTER TABLE credit_score_check ADD COLUMN consent_version TEXT NOT NULL DEFAULT ''"
+                )
+            if "consent_purpose" not in columns:
+                connection.execute(
+                    "ALTER TABLE credit_score_check ADD COLUMN consent_purpose TEXT NOT NULL DEFAULT ''"
+                )
 
     def subject_hash(self, pan: str) -> str:
         normalized = pan.upper().strip()
@@ -118,14 +143,23 @@ class LocalCreditBureauDatabase:
                 (subject_hash,),
             ).fetchone()
 
-    def record_check(self, application_id: str, subject_hash: str, result: CreditScoreResult, consent_recorded: bool) -> None:
+    def record_check(
+        self,
+        application_id: str,
+        subject_hash: str,
+        result: CreditScoreResult,
+        consent_recorded: bool,
+        consent_version: str,
+        consent_purpose: str,
+    ) -> None:
         with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO credit_score_check(
                     application_id, subject_hash, score, band, provider,
-                    bureau_reference, consent_recorded, checked_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    bureau_reference, consent_recorded, consent_version,
+                    consent_purpose, checked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     application_id,
@@ -135,6 +169,8 @@ class LocalCreditBureauDatabase:
                     result.provider,
                     result.reference,
                     int(consent_recorded),
+                    consent_version,
+                    consent_purpose,
                     result.checked_at,
                 ),
             )
@@ -149,7 +185,15 @@ class LocalCreditBureauProvider:
         self.database = database
         self.policy = policy
 
-    def fetch_score(self, pan: str, consent_recorded: bool, application_id: str) -> CreditScoreResult:
+    def fetch_score(
+        self,
+        pan: str,
+        consent_recorded: bool,
+        application_id: str,
+        *,
+        consent_version: str,
+        consent_purpose: str,
+    ) -> CreditScoreResult:
         if not consent_recorded:
             raise ValueError("Explicit consent is required before obtaining credit information.")
         row = self.database.lookup(pan)
@@ -173,12 +217,22 @@ class LocalCreditBureauProvider:
             row["bureau_reference"],
             datetime.now(timezone.utc).isoformat(),
         )
-        self.database.record_check(application_id, self.database.subject_hash(pan), result, consent_recorded)
+        self.database.record_check(
+            application_id,
+            self.database.subject_hash(pan),
+            result,
+            consent_recorded,
+            consent_version,
+            consent_purpose,
+        )
         return result
 
 
 class CreditBureauDecisionAgent:
     """Applies versioned bank thresholds after an authorised score lookup."""
+
+    supported_consent_version = "CREDIT_BUREAU_CONSENT_V1"
+    consent_purpose = "LOAN_ELIGIBILITY_AND_CREDIT_RISK_ASSESSMENT"
 
     def __init__(
         self,
@@ -192,9 +246,41 @@ class CreditBureauDecisionAgent:
         self.policy = policy
         self.provider = provider
 
-    def assess(self, application_id: str, pan: str, consent_recorded: bool) -> LoanApplication:
+    def assess(
+        self,
+        application_id: str,
+        pan: str,
+        consent_recorded: bool,
+        consent_version: str = supported_consent_version,
+    ) -> LoanApplication:
         loan = self.repository.get_loan(application_id)
-        result = self.provider.fetch_score(pan, consent_recorded, application_id)
+        if not consent_recorded:
+            raise ValueError("Explicit consent is required before obtaining credit information.")
+        if consent_version != self.supported_consent_version:
+            raise ValueError("The credit-bureau consent version is unsupported or expired.")
+        consent_recorded_at = datetime.now(timezone.utc).isoformat()
+        loan.credit_bureau_consent_version = consent_version
+        loan.credit_bureau_consent_recorded_at = consent_recorded_at
+        loan.credit_bureau_consent_purpose = self.consent_purpose
+        self.repository.save_loan(loan)
+        self.audit.write(
+            "credit-bureau-agent",
+            "credit_bureau.consent_recorded",
+            loan.application_id,
+            "SUCCESS",
+            {
+                "consent_version": consent_version,
+                "consent_purpose": self.consent_purpose,
+                "recorded_at": consent_recorded_at,
+            },
+        )
+        result = self.provider.fetch_score(
+            pan,
+            consent_recorded,
+            application_id,
+            consent_version=consent_version,
+            consent_purpose=self.consent_purpose,
+        )
         loan.credit_score = result.score
         loan.credit_score_band = result.band
         loan.credit_score_provider = result.provider
@@ -240,4 +326,36 @@ class CreditBureauDecisionAgent:
 
         self.repository.save_loan(loan)
         self.audit.write("credit-bureau-agent", "credit_bureau.assessed", loan.application_id, outcome, audit_detail)
+        return loan
+
+    def route_unavailable(self, application_id: str) -> LoanApplication:
+        """Keep provider/configuration failures out of automated rejection."""
+        loan = self.repository.get_loan(application_id)
+        approval = self.repository.create_approval(
+            Approval(
+                approval_id=f"APR-{len(self.repository.list_approvals()) + 1:04d}",
+                kind="CREDIT_BUREAU_UNAVAILABLE",
+                entity_id=loan.application_id,
+                required_role="credit.manager",
+                package={
+                    "reason": "Credit-bureau result unavailable; manual retrieval or retry required",
+                    "consent_version": loan.credit_bureau_consent_version,
+                    "consent_purpose": loan.credit_bureau_consent_purpose,
+                },
+            )
+        )
+        loan.status = LoanStatus.AWAITING_APPROVAL.value
+        loan.credit_score_decision = "HUMAN_REVIEW_BUREAU_UNAVAILABLE"
+        loan.diagnosis = (
+            f"Credit-bureau result is unavailable; routed to Credit Manager review "
+            f"({approval.approval_id})."
+        )
+        self.repository.save_loan(loan)
+        self.audit.write(
+            "credit-bureau-agent",
+            "credit_bureau.unavailable",
+            loan.application_id,
+            "PENDING",
+            {"approval_id": approval.approval_id},
+        )
         return loan

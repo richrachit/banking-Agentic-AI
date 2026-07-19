@@ -1,146 +1,224 @@
 # Architecture and Coding Standards
 
-## Current architecture
+## 1. Scope and design intent
 
-The repository currently implements a local, browser-driven banking workflow reference. It combines a lightweight web application, domain models, policy-driven agents, an append-only audit log, and a JSON-backed repository.
+The repository is a local reference architecture for loan-exception resolution and dormant-account/unclaimed-balance operations. Its central design principle is **bounded agency**: software can gather facts, classify work, execute explicitly permitted steps, and package evidence, while named human authorities retain policy deviations, regulatory sign-off, identity decisions, and customer-money movement.
 
-## Feature-to-file map
+The current applications run against local JSON/SQLite adapters. `database/schema.sql` defines a PostgreSQL production target, but no active PostgreSQL repository is implemented.
 
-| Feature | Primary module(s) | Persistence connection |
-| --- | --- | --- |
-| Role-based browser login and dashboard | `banking_agents/web_app.py` | Reads and writes via `banking_agents/repository.py` and `banking_agents/audit.py` |
-| Customer loan submission | `banking_agents/web_app.py`, `banking_agents/loan_agent.py` | Writes loan records to `data/state.json` |
-| Document verification and review | `banking_agents/document_verification.py`, `banking_agents/document_ai.py` | Evidence is carried through the loan record and persisted with the loan |
-| Loan approval / rejection / reopen | `banking_agents/web_app.py`, `banking_agents/loan_agent.py` | Updates loan status in `data/state.json` and records audit events in `data/audit.jsonl` |
-| Dormancy lifecycle and transfer approvals | `banking_agents/dormancy_agent.py` | Updates account state and approval records in `data/state.json` |
-| Automation supervisor | `banking_agents/automation_agent.py` | Uses repository and audit outputs to drive the workflow |
-
-### Components
-
-| Layer | Responsibility | Local implementation |
-| --- | --- | --- |
-| Interface | Browser-based workflow entrypoint for customers, operations, credit, compliance, and admins | `banking_agents/web_app.py` |
-| Orchestration | Coordinates loan exception handling, dormancy lifecycle processing, and automation | `banking_agents/loan_agent.py`, `banking_agents/dormancy_agent.py`, `banking_agents/automation_agent.py` |
-| Policy | Stores deterministic business thresholds and role-based rules | `banking_agents/policy.py` |
-| Domain models | Defines loan, account, approval, and status models | `banking_agents/models.py` |
-| Verification | Explains document completeness and status for loan applications | `banking_agents/document_verification.py` |
-| Document AI | Optional AI-assisted document review pipeline | `banking_agents/document_ai.py` |
-| Persistence | Stores workflow state, approvals, and audit events locally | `banking_agents/repository.py`, `banking_agents/audit.py` |
-| CLI | Provides command-line entrypoints for seed data, workflow runs, approvals, and transfer execution | `banking_agents/cli.py` |
-
-## Runtime flow
+## 2. Runtime context
 
 ```text
-Browser UI
-  -> request handler and role-based form submission
-  -> workflow action dispatcher
-  -> loan agent / dormancy agent / automation agent
-  -> repository state update
-  -> audit log write
-  -> approval queue / dashboard refresh
+Customer / Loan Ops / Credit / Compliance / Admin
+              |
+       +------+-------------------+
+       |                          |
+Responsive browser app       FastAPI `/api/v1`
+`web_app.py`                 `api_app.py`
+       |                          |
+       +------ application services ------+
+                       |
+             LoanOriginationService
+                       |
+       +---------------+-------------------+
+       |               |                   |
+Credit Bureau       Loan Exception      Dormancy
+Decision Agent      Agent               Agent
+       |               |                   |
+Provider contract   Document/KYC        Jurisdiction policy
+       |             providers               |
+       +---------------+-------------------+
+                       |
+          OperationsAutomationAgent
+                       |
+     Local repository / audit / case / model stores
+                       |
+        PostgreSQL + object/WORM storage target
 ```
 
-## Current design decisions
+The CLI calls the same workflow agents for development and tests. The browser app uses a standard-library HTTP server on port 8000; FastAPI runs separately on port 8001 by convention and supplies generated OpenAPI for clients.
 
-- **Human authority remains explicit.** The agents can diagnose cases, request missing evidence, retry verification, and propose actions, but they do not bypass approvals for deviations or money movement.
-- **Policy is data-driven.** Rules such as dormancy thresholds, transfer wait periods, income tolerance, and required roles live in `PolicyConfig` instead of embedded in the agent logic.
-- **State transitions are visible and typed.** Loan applications and accounts move through well-defined status values that are persisted and displayed back to the user.
-- **Every workflow action is auditable.** The local audit log captures the actor, action, target, outcome, and supporting metadata.
-- **The demo stays local and safe.** The repository is file-based and does not perform real payment or identity verification outside the demo model.
+## 3. Layer boundaries
 
-## Component responsibilities
+| Layer | Responsibility | Modules |
+| --- | --- | --- |
+| Interfaces | Parse browser/API/CLI input, authenticate, authorize, shape output | `web_app.py`, `api_app.py`, `cli.py` |
+| Application service | Coordinate a user intent across agents without duplicating business flow | `loan_origination.py` |
+| Orchestration agents | Diagnose work, perform constrained transitions, create human tasks | `credit_bureau_agent.py`, `loan_agent.py`, `dormancy_agent.py`, `automation_agent.py` |
+| Verification/providers | Evaluate documents/KYC or obtain an external normalized fact | `document_verification.py`, `document_ai.py`, `kyc_ai.py`, `CreditBureauProvider` |
+| Policy/domain | Define thresholds, statuses, applications, accounts, approvals | `policy.py`, `models.py` |
+| Persistence/audit | Store active state, case history, user registry, model governance, events | `repository.py`, `audit.py`, `*_platform.py`, `training_store.py` |
+| Model lifecycle | Build derived features, collect labels, train/load advisory artifacts | `local_models.py`, `scripts/*model*.py` |
 
-### Web app
+Rules and orchestration must not depend on a specific external vendor. A real CIBIL, LOS, KYC, document, notification, filing, or payment connection should implement a narrow adapter and return normalized facts to the domain layer.
 
-The current web app is a local HTTP server that supports:
-
-- customer loan submission with document upload fields,
-- loan operations review,
-- credit decision processing,
-- compliance review and transfer approvals,
-- automation cycle execution,
-- and sign-in/out with role-based access.
-
-### Loan exception agent
-
-The loan agent evaluates the exception code and updates the loan state accordingly. It is responsible for:
-
-- document completeness checks,
-- verification retries,
-- income deviation handling,
-- approval package creation,
-- and returning the loan to the main journey after approval.
-
-### Dormancy agent
-
-The dormancy agent handles account lifecycle progression:
-
-- outreach scheduling,
-- dormancy classification,
-- transfer due date calculation,
-- approval request creation,
-- transfer execution after approval,
-- and claim lifecycle handling.
-
-### Automation controller
-
-The automation agent is a safe supervisor. It iterates through open loans and accounts, executes the constrained workflow steps, and collects pending human actions without bypassing approvals.
-
-## Data and persistence model
-
-The repository persists:
-
-- loan applications,
-- account records,
-- approvals,
-- and workflow events.
-
-The audit layer stores append-only events so the state of the system can be reconstructed and reviewed.
-
-## Production evolution path
-
-To evolve this demo into a production-grade workflow system, the following should be introduced:
-
-- durable workflow orchestration rather than in-process execution,
-- real adapters for LOS, KYC, document management, CRM, and core banking,
-- signed and versioned policy services,
-- identity and authorization infrastructure for real users,
-- encrypted document storage and redaction of PII in logs,
-- and immutable audit storage with monitoring and replay.
-
-## Coding standards
-
-- Python 3.11+ is the target runtime for this reference implementation.
-- Use type hints on public functions and dataclasses for structured business objects.
-- Keep modules focused on one business capability; avoid mixing orchestration and integration logic.
-- Prefer explicit state transitions and policy-driven rules over ad-hoc conditionals.
-- Test success, retry, approval, rejection, and duplicate-run scenarios.
-- Keep secrets, customer documents, and regulator-sensitive data out of source control and local audit logs.
-
-## PostgreSQL production data contract
-
-`database/schema.sql` provides a PostgreSQL baseline for users/roles, loan applications, document metadata and AI outputs, workflow steps, approvals, dormant-account cases, outreach, and immutable audit events. Store document bytes in encrypted object storage; persist only an object key, content hash, model result, and retention metadata in PostgreSQL. The JSON and SQLite stores are local-demo adapters, not a production persistence design.
-
-## KYC AI control boundary
-
-`banking_agents/kyc_ai.py` is an AI-assisted KYC orchestration layer. It validates basic PAN/Aadhaar format, consumes document-AI risk results, and requires consent, issuer PAN verification, an authorised Aadhaar/OVD or CKYCR route, and V-CIP where appropriate. It deliberately cannot call UIDAI, CKYCR, PAN issuer, sanctions, or V-CIP services; those must be approved bank integrations. AI results can only route or flag cases, never establish identity by themselves.
-
-## AI agent and model catalog
-
-| Component | Module | What it does | Decision boundary |
-| --- | --- | --- | --- |
-| Loan Exception Agent | `loan_agent.py` | Diagnoses loan holds, requests evidence, retries verification, resolves narrow variances, and creates credit packages. | Cannot override policy or disburse funds. |
-| Dormancy Agent | `dormancy_agent.py` | Applies jurisdiction clocks, starts outreach, prepares transfer approvals, and executes only approved transfers/claims. | Cannot approve or execute unapproved money movement. |
-| Operations Automation Agent | `automation_agent.py` | Schedules specialist agents and reports human work queues. | Cannot bypass approval gates. |
-| Document Verification Model | `document_verification.py` | Applies product document requirements and identifies missing, pending, invalid, expired, or unreadable evidence. | Completeness only; not authenticity proof. |
-| Document AI Pipeline | `document_ai.py` | Provider interface for classification, OCR, field extraction, and tamper-risk signals. | Default provider returns `PENDING`; never identity proof. |
-| Qwen Vision Provider | `document_ai.py` | Optional local image-to-text document triage using Qwen2.5-VL. | Review suggestion only; no autonomous approval. |
-| India KYC AI Agent | `kyc_ai.py` | Combines consent, format checks, AI risk, face-match thresholds, sanctions, and external KYC prerequisites. | Requires authorised PAN/Aadhaar/OVD, CKYCR, and/or V-CIP checks before `VERIFIED`. |
+## 4. Loan transaction sequence
 
 ```text
-Customer event -> rules + AI triage -> evidence request / recommendation / exception
-               -> named human authority where policy, KYC, fraud, or money movement requires it
-               -> audited state update
+POST/form application
+  -> interface authenticates CUSTOMER and validates input
+  -> repository generates application ID
+  -> LoanOriginationService persists HELD application
+  -> CreditBureauDecisionAgent asks provider (explicit consent required)
+       LOW + enabled demo rule -> REJECTED
+       REVIEW / NO_HISTORY -> CREDIT_SCORE_REVIEW approval
+       HIGH -> retain HELD and continue
+  -> LoanExceptionAgent diagnoses documents/verification/variance
+  -> repository state + case history + audit event
+  -> role-scoped response/progression
 ```
 
-No component in this repository is an autonomous authority for identity proof, policy override, customer-money movement, regulatory sign-off, or disbursement.
+The `HIGH` branch means “continue checks,” never “approve.” The local low-score auto-rejection exists to demonstrate the requested workflow and is controlled by `PolicyConfig.auto_reject_low_credit_score`. Production should default this off until policy, legal, compliance, fairness, reason-code, and grievance controls are approved.
+
+The local bureau adapter is deliberately fictional. It HMAC-hashes PAN for fixture lookup and stores the result/reference, but the default key is unsafe and the request's `consent_version` is not yet persisted in a dedicated record. The target schema corrects the data shape with consent, enquiry, and policy-decision entities; an implementation is still required.
+
+## 5. Dormant-account transaction sequence
+
+```text
+Scheduled/API assessment
+  -> normalize account/jurisdiction/as-of facts
+  -> apply versioned inactivity/outreach/transfer policy
+  -> write lifecycle and outreach evidence
+  -> create compliance approval when due
+  -> only approved path reaches transfer adapter boundary
+  -> retain claim-ready evidence
+  -> validated/approved customer claim reaches payment boundary
+```
+
+Jurisdiction rules are configuration, not learned predictions. The local values are illustrative and must not be treated as current law. A production rules service needs effective dates, source references, approval, regression tests, controlled rollout, and historical replay.
+
+## 6. Authorization model
+
+The interface layer must enforce role and entity scope before calling an agent:
+
+- Customers can see only loans whose `submitted_by` matches their username and accounts whose `customer_id` matches their identity.
+- Loan Operations can run loan exception work but cannot decide credit/compliance approvals.
+- Credit Managers can decide only `credit.manager` approval packages.
+- Compliance Officers can decide only `compliance.officer` packages and run dormant-account controls.
+- The local API permits `ADMIN` to decide any approval. That convenience must be removed in production to preserve segregation of duties.
+
+The local token map, static development users, and file-based registration are not an enterprise authorization system. Production authorization must be rechecked in the service/repository tier—not trusted from a client-supplied role.
+
+## 7. AI and deterministic control architecture
+
+The term “agent” does not imply every component is a trained model.
+
+| Category | Components | Why |
+| --- | --- | --- |
+| Deterministic orchestrators | Loan Exception, Dormancy, Operations Automation | Auditable state transitions and approval boundaries |
+| Deterministic controls | Credit Bureau Decision, India KYC, product document rules | Policy/consent/prerequisites must remain explicit and versionable |
+| Optional pretrained model | Qwen2.5-VL document provider | Visual extraction/triage suggestion only |
+| Locally trainable advisory | Loan exception and document review classifiers | Optional routing signal; never state-changing authority |
+
+The advisory classifiers are not currently invoked by the web/API origination flow. Their registry and artifacts are a separate governance demonstration. This separation prevents a synthetic demonstration model from silently becoming a credit decision engine.
+
+## 8. Active local data architecture
+
+| Store | Writer | Contents and limitations |
+| --- | --- | --- |
+| `data/state.json` | `LocalRepository` | Loans, accounts, approvals; no transactions/locking/multi-instance safety |
+| `data/audit.jsonl` | `AuditLog` | Append-only-style events; not immutable/WORM |
+| `data/users.json` | `UserRegistry` | Salted PBKDF2 password hashes; no enterprise identity lifecycle |
+| `data/credit_bureau.sqlite3` | Local bureau database | Fictional HMAC-keyed fixtures/checks; not CIBIL |
+| `data/loan_exception_cases.sqlite3` | Loan case platform | Exception/document history |
+| `data/dormancy_cases.sqlite3` | Dormancy case platform | Case/outreach/filing history |
+| `data/model_training.sqlite3` | Model training database | Catalog, derived features, labels, runs, predictions |
+| `data/models/` | Local trainer | Joblib artifacts with registered SHA-256 |
+| `data/uploads/` | Web/API interface | Plain local files; no malware scan/encryption/retention guarantees |
+
+Local JSON and SQLite stores can diverge if a process fails between writes. Production workflows require one transaction/outbox strategy across authoritative state and emitted events, plus idempotent external operations.
+
+## 9. PostgreSQL target contract
+
+`database/schema.sql` groups the production data contract into:
+
+- identity: `app_user`;
+- origination/documents: `loan_application`, `loan_document`;
+- bureau governance: `credit_bureau_consent`, `credit_bureau_enquiry`, `credit_policy_decision`;
+- workflow/authority: `workflow_step`, `approval_case`, `immutable_audit_event`;
+- dormant accounts: `dormant_account_case`, `outreach_attempt`;
+- model governance: `ai_model_catalog`, `ai_training_example`, `ai_training_run`, `ai_model_prediction`.
+
+The schema uses UUIDs, JSONB payloads, timestamps, constraints, and operational indexes as a baseline. It is not a complete migration set. A production implementation also needs:
+
+- normalized user/role/entitlement mapping and row/entity authorization;
+- policy/model/provider version references on every material decision;
+- optimistic version columns or locking strategy;
+- unique idempotency constraints for submissions, enquiries, approvals, transfers, filings, and claims;
+- outbox/inbox tables for reliable integration events;
+- encrypted/tokenized identity fields and key management;
+- partitioning/retention/archive controls and immutable audit export;
+- migration tooling, backups, restore tests, high availability, and monitoring.
+
+Document bytes belong in encrypted object storage. PostgreSQL should retain the object key, cryptographic hash, content/scan metadata, retention class, and decision evidence—not raw files in JSONB.
+
+## 10. Trust boundaries and production adapters
+
+| Boundary | Required controls |
+| --- | --- |
+| Mobile/browser ↔ API | TLS, approved origins, API gateway/WAF, rate limits, schema validation, short-lived tokens, device/session controls |
+| API ↔ identity provider | OIDC/OAuth, MFA/step-up, group/role mapping, revocation, service identities |
+| Workflow ↔ CIBIL/CIC | Authorised access, purpose-specific consent, mTLS/OAuth, idempotency, signed/hashed evidence, error/no-hit semantics, reconciliation |
+| Workflow ↔ LOS/core banking | Transaction IDs, idempotency, maker-checker, limits, reconciliation, compensating actions |
+| Document/KYC providers | Malware scan, MIME validation, encrypted storage, issuer verification, confidence/reason codes, human fallback |
+| Notifications | Template/version approval, consent/preference handling, delivery receipts, PII minimization |
+| Regulator/DEA filing | Current rules, maker-checker sign-off, acknowledgement, batch/ledger reconciliation, evidence retention |
+| Model registry/serving | Signed artifacts, SBOM/provenance, isolated load, validation approval, monitoring, rollback |
+
+## 11. Audit and observability
+
+Every material action should correlate:
+
+- request/correlation ID;
+- authenticated actor and delegated service identity;
+- entity, action, before/after state, and outcome;
+- policy/model/provider version;
+- evidence/reference hashes rather than unnecessary PII;
+- approval role, decision, reason, and override rationale;
+- external idempotency/reference/acknowledgement IDs.
+
+Operational monitoring should separate workflow quality from model quality. Examples include exception aging, customer evidence turnaround, approval SLA, outreach delivery, transfer lateness, reconciliation breaks, model drift, false-positive/override rate, and provider failures.
+
+## 12. Security and privacy decisions
+
+- Fail closed when consent, identity, evidence, provider response, authority, or artifact provenance is absent.
+- Do not log raw PAN/Aadhaar, access tokens, document text/bytes, passwords, or provider payloads.
+- Collect only purpose-required data; support consent denial/revocation, retention, correction, and deletion where applicable.
+- Encrypt in transit and at rest; rotate keys/secrets and separate environments/accounts.
+- Apply deny-by-default RBAC/ABAC and enforce maker-checker separation for adverse/deviation, transfer, claim, and disbursement actions.
+- Use approved customer explanations and grievance/dispute paths for adverse outcomes.
+- Threat-model prompt injection, malicious documents, model supply chain, data exfiltration, insecure deserialization, and agent tool abuse.
+
+RBI's [Digital Lending Directions, 2025](https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12848&Mode=0) describe need-based collection with prior explicit consent and an audit trail, purpose disclosure, and consent choices. They and other applicable requirements must be interpreted by the bank's legal/compliance teams for the actual deployment.
+
+## 13. Coding standards
+
+- Target Python 3.11+ and use type hints on public/service boundaries.
+- Keep interface parsing, application orchestration, deterministic policy, provider adapters, and persistence separate.
+- Model business data with dataclasses/enums and explicit state transitions.
+- Centralize approved thresholds/rules; attach version/effective date/source in production.
+- Return normalized provider results and map provider-specific errors at the adapter boundary.
+- Make external actions idempotent and safe to retry; persist intent before side effects and reconcile completion.
+- Never infer authority from model confidence. Require the correct human role when policy says so.
+- Store derived, minimized features for training; retain label source and human/synthetic provenance.
+- Never load an untrusted joblib/pickle artifact; validate registry, path, hash, and environment.
+- Preserve backward-compatible `/api/v1` contracts or introduce a new version with migration guidance.
+- Add tests for authorization/ownership, consent, no-hit/error, success/review/reject, duplicate/retry, partial failure, approval boundaries, and artifact tampering.
+- Keep generated data, documents, credentials, databases, and artifacts out of source control.
+
+## 14. Verification commands
+
+```powershell
+# Full unit/API suite
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+
+# API schema and interactive documentation
+.\.venv\Scripts\python.exe -m uvicorn banking_agents.api_app:app --port 8001
+# Open http://127.0.0.1:8001/docs
+
+# Model governance state
+.\.venv\Scripts\python.exe scripts\model_status.py
+```
+
+See [API.md](API.md), [WORKFLOWS.md](WORKFLOWS.md), [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md), and [MODEL_TRAINING.md](MODEL_TRAINING.md) for detailed contracts.
+

@@ -64,6 +64,9 @@ class LoanApplication:
     credit_score_reference: str = ""
     credit_score_checked_at: str = ""
     credit_score_decision: str = "NOT_CHECKED"
+    credit_bureau_consent_version: str = ""
+    credit_bureau_consent_recorded_at: str = ""
+    credit_bureau_consent_purpose: str = ""
 
 
 @dataclass

@@ -1,0 +1,982 @@
+{
+  "components": {
+    "schemas": {
+      "ApprovalDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "ApprovalDecisionRequest",
+        "type": "object"
+      },
+      "AutomationRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of_date": {
+            "title": "As Of Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of_date"
+        ],
+        "title": "AutomationRunRequest",
+        "type": "object"
+      },
+      "Body_upload_document_api_v1_loan_applications__application_id__documents_post": {
+        "properties": {
+          "document_type": {
+            "title": "Document Type",
+            "type": "string"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_type",
+          "file"
+        ],
+        "title": "Body_upload_document_api_v1_loan_applications__application_id__documents_post",
+        "type": "object"
+      },
+      "DormancyRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "as_of_date": {
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "balance": {
+            "minimum": 0.0,
+            "title": "Balance",
+            "type": "number"
+          },
+          "customer_id": {
+            "title": "Customer Id",
+            "type": "string"
+          },
+          "jurisdiction": {
+            "default": "IN-RBI-DEA",
+            "title": "Jurisdiction",
+            "type": "string"
+          },
+          "last_customer_activity": {
+            "title": "Last Customer Activity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "customer_id",
+          "balance",
+          "last_customer_activity",
+          "as_of_date"
+        ],
+        "title": "DormancyRunRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LoanCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "applicant_name": {
+            "title": "Applicant Name",
+            "type": "string"
+          },
+          "consent_version": {
+            "default": "CREDIT_BUREAU_CONSENT_V1",
+            "title": "Consent Version",
+            "type": "string"
+          },
+          "credit_bureau_consent": {
+            "title": "Credit Bureau Consent",
+            "type": "boolean"
+          },
+          "date_of_birth": {
+            "title": "Date Of Birth",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "employer_name": {
+            "default": "",
+            "title": "Employer Name",
+            "type": "string"
+          },
+          "employment_type": {
+            "title": "Employment Type",
+            "type": "string"
+          },
+          "loan_product": {
+            "default": "PERSONAL",
+            "title": "Loan Product",
+            "type": "string"
+          },
+          "loan_purpose": {
+            "title": "Loan Purpose",
+            "type": "string"
+          },
+          "monthly_income": {
+            "exclusiveMinimum": 0.0,
+            "title": "Monthly Income",
+            "type": "number"
+          },
+          "pan_for_bureau_lookup": {
+            "title": "Pan For Bureau Lookup",
+            "type": "string"
+          },
+          "phone": {
+            "title": "Phone",
+            "type": "string"
+          },
+          "requested_amount": {
+            "exclusiveMinimum": 0.0,
+            "title": "Requested Amount",
+            "type": "number"
+          },
+          "residential_address": {
+            "title": "Residential Address",
+            "type": "string"
+          },
+          "tenure_months": {
+            "exclusiveMinimum": 0.0,
+            "title": "Tenure Months",
+            "type": "integer"
+          },
+          "uploaded_document_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Uploaded Document Types",
+            "type": "array"
+          }
+        },
+        "required": [
+          "applicant_name",
+          "date_of_birth",
+          "email",
+          "phone",
+          "residential_address",
+          "requested_amount",
+          "tenure_months",
+          "loan_purpose",
+          "employment_type",
+          "monthly_income",
+          "pan_for_bureau_lookup",
+          "credit_bureau_consent"
+        ],
+        "title": "LoanCreateRequest",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "string"
+          },
+          "user_type": {
+            "title": "User Type",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password",
+          "user_type"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "ReactivationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "kyc_confirmed": {
+            "title": "Kyc Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kyc_confirmed"
+        ],
+        "title": "ReactivationRequest",
+        "type": "object"
+      },
+      "SignupRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "minLength": 10,
+            "title": "Password",
+            "type": "string"
+          },
+          "user_type": {
+            "title": "User Type",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password",
+          "display_name",
+          "email",
+          "user_type"
+        ],
+        "title": "SignupRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Role-scoped local API for loan exceptions, credit-bureau routing, dormant accounts, approvals, and model governance.",
+    "title": "Banking Operations AI API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/accounts": {
+      "get": {
+        "operationId": "accounts_api_v1_accounts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Accounts",
+        "tags": [
+          "Dormant accounts"
+        ]
+      }
+    },
+    "/api/v1/accounts/{account_id}/reactivation-requests": {
+      "post": {
+        "operationId": "request_reactivation_api_v1_accounts__account_id__reactivation_requests_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReactivationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Request Reactivation",
+        "tags": [
+          "Dormant accounts"
+        ]
+      }
+    },
+    "/api/v1/ai/models": {
+      "get": {
+        "operationId": "model_registry_api_v1_ai_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Model Registry",
+        "tags": [
+          "AI governance"
+        ]
+      }
+    },
+    "/api/v1/approvals": {
+      "get": {
+        "operationId": "approvals_api_v1_approvals_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Approvals",
+        "tags": [
+          "Approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/{approval_id}/decision": {
+      "post": {
+        "operationId": "decide_approval_api_v1_approvals__approval_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decide Approval",
+        "tags": [
+          "Approvals"
+        ]
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "login_api_v1_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "logout_api_v1_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Logout",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v1/auth/signup": {
+      "post": {
+        "operationId": "signup_api_v1_auth_signup_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Signup",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v1/automation/cycles": {
+      "post": {
+        "operationId": "run_automation_api_v1_automation_cycles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutomationRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Automation",
+        "tags": [
+          "Automation"
+        ]
+      }
+    },
+    "/api/v1/dormancy/cycles": {
+      "post": {
+        "operationId": "run_dormancy_api_v1_dormancy_cycles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DormancyRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Dormancy",
+        "tags": [
+          "Dormant accounts"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/loan-applications": {
+      "get": {
+        "operationId": "list_loans_api_v1_loan_applications_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Loans",
+        "tags": [
+          "Loans"
+        ]
+      },
+      "post": {
+        "operationId": "create_loan_api_v1_loan_applications_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoanCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Loan",
+        "tags": [
+          "Loans"
+        ]
+      }
+    },
+    "/api/v1/loan-applications/{application_id}": {
+      "get": {
+        "operationId": "loan_detail_api_v1_loan_applications__application_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "title": "Application Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Loan Detail",
+        "tags": [
+          "Loans"
+        ]
+      }
+    },
+    "/api/v1/loan-applications/{application_id}/documents": {
+      "post": {
+        "operationId": "upload_document_api_v1_loan_applications__application_id__documents_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "title": "Application Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_document_api_v1_loan_applications__application_id__documents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upload Document",
+        "tags": [
+          "Loans"
+        ]
+      }
+    },
+    "/api/v1/loan-applications/{application_id}/run-exception-agent": {
+      "post": {
+        "operationId": "run_exception_api_v1_loan_applications__application_id__run_exception_agent_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "title": "Application Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Exception",
+        "tags": [
+          "Loans"
+        ]
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "operationId": "me_api_v1_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Me",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v1/me/dashboard": {
+      "get": {
+        "operationId": "dashboard_api_v1_me_dashboard_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Dashboard",
+        "tags": [
+          "Dashboards"
+        ]
+      }
+    }
+  }
+}
