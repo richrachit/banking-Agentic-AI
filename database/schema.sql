@@ -17,6 +17,28 @@ CREATE TABLE loan_document (
   document_type text NOT NULL, object_key text NOT NULL, sha256 text NOT NULL, verification_status text NOT NULL DEFAULT 'PENDING',
   ai_result jsonb NOT NULL DEFAULT '{}'::jsonb, uploaded_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE credit_bureau_consent (
+  consent_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), application_id text NOT NULL REFERENCES loan_application(application_id),
+  customer_id uuid REFERENCES app_user(user_id), purpose text NOT NULL, consent_version text NOT NULL,
+  granted boolean NOT NULL, granted_at timestamptz NOT NULL, revoked_at timestamptz,
+  evidence_hash text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE credit_bureau_enquiry (
+  enquiry_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), application_id text NOT NULL REFERENCES loan_application(application_id),
+  consent_id uuid NOT NULL REFERENCES credit_bureau_consent(consent_id), provider text NOT NULL,
+  product_name text NOT NULL, provider_reference text, response_status text NOT NULL,
+  score integer CHECK (score BETWEEN 300 AND 900), score_band text,
+  idempotency_key text UNIQUE NOT NULL, raw_response_hash text,
+  requested_at timestamptz NOT NULL DEFAULT now(), completed_at timestamptz
+);
+CREATE TABLE credit_policy_decision (
+  decision_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), application_id text NOT NULL REFERENCES loan_application(application_id),
+  enquiry_id uuid REFERENCES credit_bureau_enquiry(enquiry_id), policy_version text NOT NULL,
+  outcome text NOT NULL, reason_codes jsonb NOT NULL DEFAULT '[]'::jsonb,
+  explanation text NOT NULL, human_review_required boolean NOT NULL,
+  override_by uuid REFERENCES app_user(user_id), override_reason text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE workflow_step (
   step_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), entity_type text NOT NULL, entity_id text NOT NULL,
   stage text NOT NULL, owner_role text NOT NULL, actor text NOT NULL, outcome text NOT NULL, detail jsonb NOT NULL DEFAULT '{}'::jsonb, occurred_at timestamptz NOT NULL DEFAULT now()
@@ -38,6 +60,43 @@ CREATE TABLE immutable_audit_event (
   event_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), correlation_id uuid, actor text NOT NULL, action text NOT NULL,
   entity_type text NOT NULL, entity_id text NOT NULL, outcome text NOT NULL, detail jsonb NOT NULL DEFAULT '{}'::jsonb, occurred_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Model governance contract. Store only de-identified derived features here;
+-- raw documents and direct identity attributes belong in approved source systems.
+CREATE TABLE ai_model_catalog (
+  model_key text PRIMARY KEY, display_name text NOT NULL, component_type text NOT NULL,
+  implementation text NOT NULL, training_supported boolean NOT NULL DEFAULT false,
+  risk_tier text NOT NULL, positive_definition text NOT NULL, negative_definition text NOT NULL,
+  authority_boundary text NOT NULL, feature_schema jsonb NOT NULL DEFAULT '[]'::jsonb,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE ai_training_example (
+  example_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), example_key text UNIQUE NOT NULL,
+  model_key text NOT NULL REFERENCES ai_model_catalog(model_key), entity_type text NOT NULL,
+  entity_id_hash text NOT NULL, features jsonb NOT NULL, label smallint NOT NULL CHECK (label IN (0, 1)),
+  label_name text NOT NULL, label_source text NOT NULL, human_verified boolean NOT NULL DEFAULT false,
+  synthetic boolean NOT NULL DEFAULT false, observed_at timestamptz, source_hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE ai_training_run (
+  run_id text PRIMARY KEY, model_key text NOT NULL REFERENCES ai_model_catalog(model_key),
+  status text NOT NULL, algorithm text NOT NULL, dataset_fingerprint text NOT NULL,
+  sample_count integer NOT NULL, positive_count integer NOT NULL, negative_count integer NOT NULL,
+  human_verified_count integer NOT NULL, synthetic_count integer NOT NULL,
+  metrics jsonb NOT NULL DEFAULT '{}'::jsonb, artifact_uri text, artifact_sha256 text,
+  library_versions jsonb NOT NULL DEFAULT '{}'::jsonb, error_message text,
+  started_at timestamptz NOT NULL DEFAULT now(), completed_at timestamptz
+);
+CREATE TABLE ai_model_prediction (
+  prediction_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id text NOT NULL REFERENCES ai_training_run(run_id),
+  model_key text NOT NULL, entity_type text NOT NULL, entity_id_hash text NOT NULL,
+  features jsonb NOT NULL, predicted_label smallint NOT NULL CHECK (predicted_label IN (0, 1)),
+  positive_probability numeric(7,6) NOT NULL, advisory_only boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE INDEX ix_workflow_entity ON workflow_step(entity_type, entity_id, occurred_at);
 CREATE INDEX ix_loan_status ON loan_application(status, updated_at);
+CREATE INDEX ix_bureau_application ON credit_bureau_enquiry(application_id, completed_at);
 CREATE INDEX ix_dormancy_due ON dormant_account_case(status, transfer_due_on);
+CREATE INDEX ix_ai_training_model ON ai_training_example(model_key, label, label_source);
+CREATE INDEX ix_ai_run_model ON ai_training_run(model_key, status, started_at);

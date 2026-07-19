@@ -14,6 +14,7 @@ class ProgressStage:
 
 LOAN_STAGES = (
     ("Application submitted", "Customer", False),
+    ("Consent and credit-bureau assessment", "Credit Bureau Agent", True),
     ("Data and document validation", "AI Agent", True),
     ("Fraud and credit assessment", "AI Agent", True),
     ("Policy decision", "AI Agent", True),
@@ -26,8 +27,9 @@ def loan_progress(status: str, exception_code: str = "") -> list[ProgressStage]:
     """Returns a truthful, user-facing progression; AI starts at validation."""
     manual = status in {"AWAITING_APPROVAL", "AWAITING_CUSTOMER", "HELD"}
     complete = status == "READY_FOR_MAIN_JOURNEY"
+    rejected = status == "REJECTED"
     stages: list[ProgressStage] = []
     for index, (name, owner, ai_active) in enumerate(LOAN_STAGES):
-        done = index == 0 or (index <= 3 and (manual or complete)) or (index == 4 and complete)
+        done = index == 0 or (rejected and index <= 1) or (index <= 4 and (manual or complete)) or (index == 5 and complete)
         stages.append(ProgressStage(name, owner, ai_active, done))
     return stages

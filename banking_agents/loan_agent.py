@@ -49,14 +49,6 @@ class LoanExceptionAgent:
         return loan
 
     def approve_application(self, application_id: str, reason: str) -> LoanApplication:
-        loan = self.repository.get_loan(application_id)
-        loan.status = LoanStatus.READY_FOR_MAIN_JOURNEY.value
-        loan.diagnosis = f"Application approved by operations: {reason}"
-        self.repository.save_loan(loan)
-        self.audit.write("loan-agent", "loan.approved", application_id, "APPROVED", {"reason": reason})
-        return loan
-
-    def approve_application(self, application_id: str, reason: str) -> LoanApplication:
         # Feature: direct approve action from the dashboard review queue.
         # Database connection: updates the loan status in data/state.json.
         loan = self.repository.get_loan(application_id)

@@ -7,6 +7,7 @@ names, addresses, PAN/Aadhaar values, e-mail addresses, and phone numbers must
 remain in approved source systems and are deliberately rejected here.
 """
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -77,8 +78,17 @@ class ModelTrainingDatabase:
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
+    @contextmanager
+    def _connection(self):
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS model_catalog (
@@ -179,7 +189,7 @@ class ModelTrainingDatabase:
 
     def sync_catalog(self, components: Iterable[ModelComponent]) -> None:
         now = self.utc_now()
-        with self._connect() as connection:
+        with self._connection() as connection:
             for component in components:
                 connection.execute(
                     """
@@ -232,7 +242,7 @@ class ModelTrainingDatabase:
         )
         source_hash = hashlib.sha256(source_material.encode("utf-8")).hexdigest()
         now = self.utc_now()
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO training_example(
@@ -271,7 +281,7 @@ class ModelTrainingDatabase:
             )
 
     def load_examples(self, model_key: str) -> list[TrainingExample]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 """
                 SELECT example_key, model_key, entity_type, entity_id_hash,
@@ -301,7 +311,7 @@ class ModelTrainingDatabase:
         ]
 
     def dataset_fingerprint(self, model_key: str) -> str:
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 "SELECT example_key, source_hash FROM training_example WHERE model_key = ? ORDER BY example_key",
                 (model_key,),
@@ -317,7 +327,7 @@ class ModelTrainingDatabase:
         dataset_fingerprint: str,
         examples: list[TrainingExample],
     ) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO training_run(
@@ -348,7 +358,7 @@ class ModelTrainingDatabase:
         artifact_sha256: str,
         library_versions: dict[str, str],
     ) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 UPDATE training_run
@@ -367,14 +377,14 @@ class ModelTrainingDatabase:
             )
 
     def fail_run(self, run_id: str, error_message: str) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 "UPDATE training_run SET status='FAILED', error_message=?, completed_at=? WHERE run_id=?",
                 (error_message[:2000], self.utc_now(), run_id),
             )
 
     def latest_successful_run(self, model_key: str) -> dict[str, Any] | None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 """
                 SELECT * FROM training_run
@@ -397,7 +407,7 @@ class ModelTrainingDatabase:
         positive_probability: float,
     ) -> None:
         validated = self._validated_features(features)
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO model_prediction(
@@ -419,7 +429,7 @@ class ModelTrainingDatabase:
             )
 
     def status_report(self) -> dict[str, Any]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             catalog_rows = connection.execute("SELECT * FROM model_catalog ORDER BY model_key").fetchall()
             counts = {
                 row["model_key"]: {

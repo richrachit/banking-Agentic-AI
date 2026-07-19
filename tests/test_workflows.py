@@ -16,21 +16,27 @@ from banking_agents.repository import LocalRepository
 
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); root = Path(self.temp.name)
-        self.repo = LocalRepository(root / "state.json"); self.audit = AuditLog(root / "audit.jsonl"); self.policy = PolicyConfig()
+        self.temp = tempfile.TemporaryDirectory(); self.root = Path(self.temp.name)
+        self.repo = LocalRepository(self.root / "state.json"); self.audit = AuditLog(self.root / "audit.jsonl"); self.policy = PolicyConfig()
+
+    def loan_agent(self):
+        return LoanExceptionAgent(self.repo, self.audit, self.policy, exception_db_path=self.root / "loan-cases.sqlite3")
+
+    def dormancy_agent(self):
+        return DormancyAgent(self.repo, self.audit, self.policy, dormancy_db_path=self.root / "dormancy-cases.sqlite3")
 
     def tearDown(self): self.temp.cleanup()
 
     def test_income_deviation_needs_then_applies_approval(self):
         self.repo.seed([LoanApplication("L1", "INCOME_VARIANCE", declared_income=100, verified_income=70)], [])
-        agent = LoanExceptionAgent(self.repo, self.audit, self.policy)
+        agent = self.loan_agent()
         self.assertEqual(agent.run("L1").status, "AWAITING_APPROVAL")
         approval = self.repo.list_approvals()[0]; approval.status = "APPROVED"; self.repo.save_approval(approval)
         self.assertEqual(agent.apply_approved_deviation("L1").status, "READY_FOR_MAIN_JOURNEY")
 
     def test_dormant_account_requires_approval_before_transfer(self):
         self.repo.seed([], [Account("A1", "C1", "IN-RBI-DEA", 90, "2010-01-01")])
-        agent = DormancyAgent(self.repo, self.audit, self.policy); agent.run(date(2026, 7, 15))
+        agent = self.dormancy_agent(); agent.run(date(2026, 7, 15))
         self.assertEqual(self.repo.get_account("A1").status, "TRANSFER_PENDING")
         approval = self.repo.list_approvals()[0]; approval.status = "APPROVED"; self.repo.save_approval(approval)
         self.assertEqual(agent.execute_approved_transfers()[0].status, "TRANSFERRED")
@@ -40,7 +46,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_rejected_loan_can_be_reopened(self):
         self.repo.seed([LoanApplication("L3", "INCOME_VARIANCE", declared_income=100, verified_income=70, status=LoanStatus.AWAITING_APPROVAL.value)], [])
-        agent = LoanExceptionAgent(self.repo, self.audit, self.policy)
+        agent = self.loan_agent()
         self.repo.create_approval(Approval("APR-0001", "LOAN_DEVIATION", "L3", "credit.manager", {"declared_income": 100, "verified_income": 70}))
         agent.reject_application("L3", "AI rejected due to missing evidence")
         self.assertEqual(self.repo.get_loan("L3").status, LoanStatus.REJECTED.value)
@@ -51,14 +57,14 @@ class WorkflowTests(unittest.TestCase):
 
     def test_approved_loan_can_be_returned_to_main_journey(self):
         self.repo.seed([LoanApplication("L4", "INCOME_VARIANCE", declared_income=100, verified_income=70, status=LoanStatus.AWAITING_APPROVAL.value)], [])
-        agent = LoanExceptionAgent(self.repo, self.audit, self.policy)
+        agent = self.loan_agent()
         agent.approve_application("L4", "Approved by operations")
         self.assertEqual(self.repo.get_loan("L4").status, LoanStatus.READY_FOR_MAIN_JOURNEY.value)
 
     def test_automation_routes_loan_and_preserves_human_gate(self):
         self.repo.seed([LoanApplication("L2", "INCOME_VARIANCE", declared_income=100, verified_income=70)], [])
-        loan = LoanExceptionAgent(self.repo, self.audit, self.policy)
-        dormancy = DormancyAgent(self.repo, self.audit, self.policy)
+        loan = self.loan_agent()
+        dormancy = self.dormancy_agent()
         result = OperationsAutomationAgent(self.repo, self.audit, loan, dormancy).run_cycle(date(2026, 7, 15))
         self.assertIn("Credit decision required for loan L2", result.pending_human_actions)
         self.assertEqual(self.repo.get_loan("L2").status, "AWAITING_APPROVAL")

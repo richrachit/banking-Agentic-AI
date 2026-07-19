@@ -179,4 +179,4 @@ Set `DOCUMENT_AI_MODEL` to another approved model identifier or a local model pa
 - Require maker-checker approval for deviations, filings, transfers, and claims.
 - Encrypt sensitive data, tokenize documents, enforce consent and retention/deletion schedules.
 - Reconcile transfer batches with the general ledger and regulator acknowledgements.
->>>>>>> ea8f23d (feat: Implement document AI pipeline for loan-document verification)
+  ea8f23d (feat: Implement document AI pipeline for loan-document verification)

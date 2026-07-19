@@ -1,0 +1,4 @@
+# Lightweight local advisory-model training and verified artifact persistence.
+# NumPy, SciPy, and threadpoolctl are installed transitively by scikit-learn.
+scikit-learn>=1.7,<2
+joblib>=1.4,<2

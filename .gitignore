@@ -1,0 +1,9 @@
+.venv/
+**/__pycache__/
+*.py[cod]
+data/model_training.sqlite3
+data/model_training.sqlite3-*
+data/credit_bureau.sqlite3
+data/credit_bureau.sqlite3-*
+data/models/
+data/uploads/

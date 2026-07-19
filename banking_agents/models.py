@@ -57,6 +57,13 @@ class LoanApplication:
     requested_amount: float = 0.0
     tenure_months: int = 0
     loan_purpose: str = ""
+    submitted_by: str = ""
+    credit_score: int | None = None
+    credit_score_band: str = "NOT_CHECKED"
+    credit_score_provider: str = ""
+    credit_score_reference: str = ""
+    credit_score_checked_at: str = ""
+    credit_score_decision: str = "NOT_CHECKED"
 
 
 @dataclass

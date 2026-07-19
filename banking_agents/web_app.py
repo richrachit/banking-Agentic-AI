@@ -6,7 +6,6 @@ audit log into one local workflow experience.
 """
 from __future__ import annotations
 
-import hmac
 import html
 import re
 import secrets
@@ -19,26 +18,22 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from .audit import AuditLog
+from .auth_service import authenticate_local_user
 from .automation_agent import OperationsAutomationAgent
+from .credit_bureau_agent import CreditBureauDecisionAgent, LocalCreditBureauDatabase, LocalCreditBureauProvider
 from .dormancy_agent import DormancyAgent
 from .loan_agent import LoanExceptionAgent
+from .loan_origination import LoanOriginationService
+from .local_models import MODEL_COMPONENTS
 from .models import Account, Approval, LoanApplication
 from .policy import PolicyConfig
 from .progression import loan_progress
 from .repository import LocalRepository
+from .training_store import ModelTrainingDatabase
 from .user_registry import UserRegistry
 from .models import DormancyStatus, LoanStatus
 
-# Local-demo credentials only. Replace with OIDC/SSO, MFA, hashed passwords,
-# session expiry, CSRF controls, and centrally audited role assignments.
-USERS = {
-    "customer": ("customer123", "CUSTOMER", "Customer"),
-    "loan.ops": ("ops123", "LOAN", "Loan Operations"),
-    "credit.manager": ("credit123", "CREDIT", "Credit Manager"),
-    "compliance.officer": ("compliance123", "COMPLIANCE", "Compliance Officer"),
-    "admin": ("admin123", "ADMIN", "Administrator"),
-}
-SESSIONS: dict[str, tuple[str, str]] = {}
+SESSIONS: dict[str, tuple[str, str, str]] = {}
 
 
 def field(values: dict[str, list[str]], name: str) -> str:
@@ -115,13 +110,20 @@ class BankingAppHandler(BaseHTTPRequestHandler):
                 requested_amount=float(field(values, "requested_amount") or 0), tenure_months=int(field(values, "tenure_months") or 0),
                 loan_purpose=field(values, "loan_purpose"), declared_income=float(field(values, "monthly_income") or 0) * 12,
                 document_evidence=self._save_uploaded_documents(application_id, files),
+                submitted_by=self._current_username(),
             )
             required = {"Application ID": loan.application_id, "Applicant name": loan.applicant_name, "Date of birth": loan.date_of_birth, "Email": loan.email, "Phone": loan.phone, "Residential address": loan.residential_address, "Employment type": loan.employment_type, "Monthly income": loan.monthly_income, "Requested amount": loan.requested_amount, "Tenure": loan.tenure_months, "Loan purpose": loan.loan_purpose}
             missing = [name for name, value in required.items() if not value]
             if missing:
                 raise ValueError(f"Complete the required fields: {', '.join(missing)}.")
-            repo.save_loan(loan)
-            output = loan_agent.run(loan.application_id)
+            policy_config = PolicyConfig()
+            bureau_database = LocalCreditBureauDatabase(Path.cwd() / "data" / "credit_bureau.sqlite3")
+            bureau_agent = CreditBureauDecisionAgent(repo, audit, policy_config, LocalCreditBureauProvider(bureau_database, policy_config))
+            output = LoanOriginationService(repo, loan_agent, bureau_agent).submit(
+                loan,
+                field(values, "pan_for_bureau_lookup"),
+                field(values, "credit_bureau_consent") == "YES",
+            )
             return f"Loan request {output.application_id} created. {output.diagnosis}"
         if action == "customer_dormant_request":
             self._allow(role, "CUSTOMER")
@@ -254,19 +256,20 @@ class BankingAppHandler(BaseHTTPRequestHandler):
 
     def _session(self) -> tuple[str, str]:
         cookie = SimpleCookie(self.headers.get("Cookie")); item = cookie.get("banking_session")
-        return SESSIONS.get(item.value, ("", "")) if item else ("", "")
+        session = SESSIONS.get(item.value) if item else None
+        return (session[0], session[1]) if session else ("", "")
+
+    def _current_username(self) -> str:
+        cookie = SimpleCookie(self.headers.get("Cookie")); item = cookie.get("banking_session")
+        session = SESSIONS.get(item.value) if item else None
+        return session[2] if session else ""
 
     def _login(self, username: str, password: str, user_type: str) -> None:
-        user = USERS.get(username)
-        registered = UserRegistry(Path.cwd() / "data" / "users.json").authenticate(username, password, user_type)
-        if user and hmac.compare_digest(password, user[0]) and user[1] == user_type:
-            authenticated = (user[1], user[2])
-        else:
-            authenticated = registered
+        authenticated = authenticate_local_user(Path.cwd() / "data", username, password, user_type)
         if not authenticated:
             self._login_page("Invalid username, password, or selected user type.")
             return
-        token = secrets.token_urlsafe(32); SESSIONS[token] = authenticated
+        token = secrets.token_urlsafe(32); SESSIONS[token] = (authenticated.role, authenticated.display_name, authenticated.username)
         self.send_response(303); self.send_header("Location", "/"); self.send_header("Set-Cookie", f"banking_session={token}; HttpOnly; SameSite=Lax; Path=/"); self.end_headers()
 
     def _signup(self, values: dict[str, list[str]]) -> None:
@@ -329,6 +332,12 @@ class BankingAppHandler(BaseHTTPRequestHandler):
         approval_rows = "".join(f"<li>{html.escape(item.approval_id)} — {html.escape(item.status)} — {html.escape(item.required_role)}</li>" for item in repo.list_approvals() if item.entity_id == loan.application_id) or "<li>No approvals for this application.</li>"
         progression_rows = "".join(f"<li><b>{'✓' if stage.completed else '○'} {html.escape(stage.name)}</b> — {html.escape(stage.owner)}{' <span class=ai>AI starts here</span>' if stage.ai_active else ''}</li>" for stage in loan_progress(loan.status, loan.exception_code))
         detail = f"""<!doctype html><html><head><meta charset='utf-8'><title>Loan application {html.escape(application_id)}</title><style>body{{font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:24px;background:#f8fafc;color:#0f172a}}main{{max-width:1000px;margin:0 auto;background:#fff;padding:24px;border-radius:20px;box-shadow:0 10px 35px rgba(15,23,42,0.08)}}h1{{margin-top:0}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}}.card{{background:#f8fafc;padding:16px;border-radius:12px;margin-top:12px}}ul{{padding-left:18px}}.ai{{background:#dbeafe;color:#1d4ed8;padding:2px 7px;border-radius:999px;font-size:.8em}}a{{color:#2563eb}}</style></head><body><main><h1>{html.escape(application_id)}</h1><p><b>Status:</b> {html.escape(loan.status)}<br><b>Customer:</b> {html.escape(loan.applicant_name or '-')}<br><b>Product:</b> {html.escape(loan.loan_product)}<br><b>Diagnosis:</b> {html.escape(loan.diagnosis or '-')}</p><div class='card'><h3>Application progression</h3><p>The AI agent starts at data and document validation, then continues through fraud, credit, and policy assessment. Human authority remains mandatory for deviations and disbursement.</p><ul>{progression_rows}</ul></div><div class='grid'><div class='card'><h3>Applicant details</h3><ul><li><b>Name:</b> {html.escape(loan.applicant_name or '-')}</li><li><b>Email:</b> {html.escape(loan.email or '-')}</li><li><b>Phone:</b> {html.escape(loan.phone or '-')}</li><li><b>Address:</b> {html.escape(loan.residential_address or '-')}</li><li><b>Income:</b> {html.escape(str(loan.monthly_income))}</li><li><b>Requested amount:</b> {html.escape(str(loan.requested_amount))}</li></ul></div><div class='card'><h3>Document evidence</h3><ul>{evidence_rows}</ul></div></div><div class='card'><h3>Requested documents</h3><ul>{requested_rows}</ul></div><div class='card'><h3>Received documents</h3><ul>{documents_rows}</ul></div><div class='card'><h3>Approvals</h3><ul>{approval_rows}</ul></div><p><a href='/'>Back to dashboard</a></p></main></body></html>"""
+        detail = detail.replace(
+            "<br><b>Diagnosis:</b>",
+            f"<br><b>Credit score:</b> {html.escape(str(loan.credit_score) if loan.credit_score is not None else '-')}"
+            f" ({html.escape(loan.credit_score_band)})<br><b>Credit decision:</b> {html.escape(loan.credit_score_decision)}"
+            "<br><b>Diagnosis:</b>",
+        )
         detail = detail.replace("<head>", "<head><meta name='viewport' content='width=device-width, initial-scale=1'>")
         detail = detail.replace("</style>", "@media(max-width:680px){body{padding:12px}main{padding:18px;border-radius:14px}.grid{grid-template-columns:1fr}.card{padding:14px}}</style>")
         self._send(detail)
@@ -398,6 +407,12 @@ class BankingAppHandler(BaseHTTPRequestHandler):
             sections.append(f"<section class='card'><div class='card-head'><div><h2>My applications</h2><p>Track the AI progression, status, and next action for your requests.</p></div><span class='badge'>Customer</span></div><table class='table'><thead><tr><th>Application</th><th>Product</th><th>Status</th><th>Next step</th><th></th></tr></thead><tbody>{customer_rows}</tbody></table></section>")
             sections.append("""<section class='card'><div class='card-head'><div><h2>Dormant account service</h2><p>Request reactivation of an inactive or dormant account. KYC and Compliance review remain mandatory.</p></div><span class='badge'>Account service</span></div><form method='post'><input type='hidden' name='action' value='customer_dormant_request'><div class='grid'><label>Account ID<input name='account_id' placeholder='Account ID' required></label><label>Registered customer ID<input name='customer_id' placeholder='Customer ID' required></label><label>KYC confirmation<select name='kyc_confirmed' required><option value='' selected disabled>Select confirmation</option><option value='YES'>I confirm my KYC details are current</option><option value='NO'>KYC update required</option></select></label></div><button>Request account reactivation</button></form><p style='color:#64748b;margin-bottom:0'>For transferred/unclaimed balances, the request is retained in the audit trail and must be processed through the bank’s claim and compliance workflow.</p></section>""")
             sections.append("""<section class='card'><div class='card-head'><div><h2>Loan application</h2><p>Complete your details and submit a new request.</p></div><span class='badge'>Customer</span></div><form method='post' enctype='multipart/form-data'><input type='hidden' name='action' value='customer_request'><div class='grid'><label>Full name<input name='applicant_name' placeholder='Full name' required></label><label>Date of birth<input name='date_of_birth' type='date' required></label><label>Email<input name='email' type='email' placeholder='Email address' required></label><label>Phone<input name='phone' placeholder='Phone number' required></label><label>Residential address<input name='residential_address' placeholder='Residential address' required></label><label>Loan product<select name='loan_product'><option>PERSONAL</option><option>HOME</option><option>BUSINESS</option></select></label><label>Requested amount<input name='requested_amount' type='number' min='1' step='0.01' placeholder='Requested loan amount' required></label><label>Tenure (months)<input name='tenure_months' type='number' min='1' placeholder='Tenure in months' required></label><label>Loan purpose<input name='loan_purpose' placeholder='Purpose of loan' required></label><label>Employment type<select name='employment_type'><option value='' selected disabled>Employment type</option><option>SALARIED</option><option>SELF_EMPLOYED</option><option>BUSINESS_OWNER</option></select></label><label>Employer/business<input name='employer_name' placeholder='Employer or business name'></label><label>Monthly income<input name='monthly_income' type='number' min='1' step='0.01' placeholder='Monthly income' required></label></div><div class='grid'><label>PAN<input name='upload_pan' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Aadhaar<input name='upload_aadhaar' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Address proof<input name='upload_address' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Bank statement<input name='upload_bank' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Income proof<input name='upload_income' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Property document<input name='upload_property' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Business registration<input name='upload_business' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Financial statement<input name='upload_financial' type='file' accept='.pdf,.png,.jpg,.jpeg'></label></div><button>Submit loan request</button></form></section>""")
+            sections[-1] = sections[-1].replace(
+                "</div><div class='grid'><label>PAN",
+                "<label>PAN for credit-bureau lookup<input name='pan_for_bureau_lookup' maxlength='10' pattern='[A-Za-z]{5}[0-9]{4}[A-Za-z]' autocomplete='off' placeholder='PAN is used for lookup and not stored' required></label>"
+                "<label style='display:flex;grid-template-columns:auto 1fr;align-items:center;gap:10px'><input name='credit_bureau_consent' type='checkbox' value='YES' style='width:auto' required>"
+                "I consent to a purpose-specific credit-bureau enquiry for this loan application.</label></div><div class='grid'><label>PAN",
+            )
         if role in {"LOAN", "ADMIN"}:
             sections.append("""<section class='card'><div class='card-head'><div><h2>Loan operations</h2><p>Review exceptions, evidence, and work items.</p></div><span class='badge'>Operations</span></div><form method='post'><input type='hidden' name='action' value='loan_input'><div class='grid'><label>Application ID<input name='application_id' placeholder='Application ID' required></label><label>Loan product<select name='loan_product'><option>PERSONAL</option><option>HOME</option><option>BUSINESS</option></select></label><label>Exception code<select name='exception_code'><option>MISSING_DOCUMENT</option><option>VERIFY_TRANSIENT_FAILURE</option><option>INCOME_VARIANCE</option></select></label><label>Document evidence<input name='document_evidence' placeholder='PAN:VALID,AADHAAR:EXPIRED'></label><label>Requested documents<input name='requested_documents' placeholder='Extra required documents'></label><label>Received documents<input name='documents' placeholder='Received documents'></label><label>Relationship manager<input name='relationship_manager' placeholder='Relationship manager'></label><label>Declared income<input name='declared_income' type='number' min='0' placeholder='Declared income'></label><label>Verified income<input name='verified_income' type='number' min='0' placeholder='Verified income'></label></div><button>Process loan exception</button></form></section>""")
             sections.append(f"""<section class='card'><div class='card-head'><div><h2>Pending / approval queue</h2><p>Applications waiting on AI review, credit approvals, or re-open steps.</p></div><span class='badge'>Queue</span></div>{pending_table}</section>""")
@@ -410,6 +425,31 @@ class BankingAppHandler(BaseHTTPRequestHandler):
             sections.append("""<section class='card'><div class='card-head'><div><h2>Dormant account lifecycle</h2><p>Manage account review, transfer approvals, and compliance actions.</p></div><span class='badge'>Compliance</span></div><form method='post'><input type='hidden' name='action' value='account_input'><div class='grid'><label>Account ID<input name='account_id' placeholder='Account ID' required></label><label>Customer ID<input name='customer_id' placeholder='Customer ID' required></label><label>Jurisdiction<input name='jurisdiction' value='IN-RBI-DEA' required></label><label>Balance<input name='balance' type='number' min='0' step='0.01' placeholder='Balance' required></label><label>Last activity<input name='last_customer_activity' type='date' required></label><label>As of<input name='as_of_date' type='date' required></label></div><button>Run lifecycle</button></form><form method='post' class='stacked'><input type='hidden' name='action' value='compliance_decision'><div class='grid'><label>Approval ID<input name='approval_id' placeholder='Approval ID' required></label><label>Decision<select name='decision'><option>APPROVED</option><option>REJECTED</option></select></label><label>Decision note<input name='note' placeholder='Decision note'></label></div><button>Submit compliance decision</button></form></section>""")
             sections.append(f"""<section class='card'><div class='card-head'><div><h2>Applications for compliance review</h2><p>Loan cases that need document review or reopen handling.</p></div><span class='badge'>Compliance queue</span></div>{review_table}</section>""")
             sections.append(f"""<section class='card'><div class='card-head'><div><h2>Dormant-account case register</h2><p>Latest persisted dormant-account and escheatment cases.</p></div><span class='badge'>Case register</span></div>{dormancy_table}</section>""")
+        if role == "ADMIN":
+            training_database = ModelTrainingDatabase(Path.cwd() / "data" / "model_training.sqlite3")
+            training_database.sync_catalog(MODEL_COMPONENTS)
+            model_rows = []
+            for component in training_database.status_report()["components"]:
+                counts = component["examples"]
+                latest_run = component["latest_run"]
+                run_status = "Not trainable" if not component["training_supported"] else (latest_run["status"] if latest_run else "Not trained")
+                evaluation = latest_run["metrics"].get("evaluation_scope", "-") if latest_run else "-"
+                model_rows.append(
+                    f"<tr><td>{html.escape(component['display_name'])}</td>"
+                    f"<td>{html.escape(component['component_type'])}</td>"
+                    f"<td>{counts['positive']} / {counts['negative']}</td>"
+                    f"<td>{counts['human_verified']} / {counts['synthetic']}</td>"
+                    f"<td>{html.escape(run_status)}</td><td>{html.escape(evaluation)}</td></tr>"
+                )
+            sections.append(
+                "<section class='card'><div class='card-head'><div><h2>AI model and data registry</h2>"
+                "<p>Positive/negative labels, training provenance, and latest local model status. Synthetic metrics are development checks only.</p>"
+                "</div><span class='badge'>Model governance</span></div>"
+                "<table class='table'><thead><tr><th>Component</th><th>Type</th><th>Positive / negative</th>"
+                "<th>Human / synthetic</th><th>Status</th><th>Evaluation scope</th></tr></thead><tbody>"
+                + "".join(model_rows)
+                + "</tbody></table></section>"
+            )
         if role in {"LOAN", "COMPLIANCE", "ADMIN"}:
             sections.append("""<section class='card'><div class='card-head'><div><h2>Agentic AI automation</h2><p>Submit an automated review cycle for open cases.</p></div><span class='badge'>Automation</span></div><form method='post'><input type='hidden' name='action' value='run_automation'><label>Run as of<input name='as_of_date' type='date' required></label><button>Run automated cycle</button></form></section>""")
         page = f"""<!doctype html><html><head><meta charset='utf-8'><title>Banking Operations AI</title><style>:root{{color-scheme:light}}*{{box-sizing:border-box}}body{{margin:0;font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(135deg,#f8fafc 0%,#e0f2fe 100%);color:#0f172a}}main{{max-width:1240px;margin:0 auto;padding:24px 20px 40px}}header{{display:flex;justify-content:space-between;align-items:center;background:linear-gradient(135deg,#0f172a 0%,#1d4ed8 100%);color:#fff;padding:24px 28px;border-radius:24px;box-shadow:0 16px 40px rgba(15,23,42,0.18)}}header h1{{margin:0;font-size:1.5rem}}.header-meta{{color:#dbeafe;font-size:.95rem;margin-top:6px}}.logout{{padding:10px 16px;border-radius:999px;background:rgba(255,255,255,0.14);border:1px solid rgba(255,255,255,0.2);color:#fff;font-weight:700;cursor:pointer}}.message{{margin:20px 0 8px;padding:14px 16px;border-radius:14px;background:#dcfce7;color:#166534;border:1px solid #bbf7d0}}.content{{display:grid;gap:18px}}.card{{background:#fff;padding:22px 24px;border-radius:20px;box-shadow:0 10px 35px rgba(15,23,42,0.08);border:1px solid #e2e8f0}}.card-head{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}}.card-head h2{{margin:0;font-size:1.2rem}}.card-head p{{margin:6px 0 0;color:#64748b}}.badge{{padding:7px 10px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em}}form{{display:grid;gap:12px}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}}label{{display:grid;gap:6px;font-weight:600;color:#334155;font-size:.95rem}}input,select,button{{width:100%;padding:12px 13px;border-radius:12px;border:1px solid #cbd5e1;font-size:1rem}}input:focus,select:focus{{outline:2px solid rgba(37,99,235,0.25);border-color:#2563eb}}button{{background:linear-gradient(135deg,#2563eb,#1d4ed8);border:none;color:#fff;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(37,99,235,0.16)}}button:hover{{transform:translateY(-1px)}}.stacked{{margin-top:8px;padding-top:10px;border-top:1px solid #e2e8f0}}ul{{padding-left:18px;line-height:1.7;color:#334155}}@media (max-width: 860px){{.grid{{grid-template-columns:1fr}}header{{flex-direction:column;align-items:flex-start;gap:12px}}}}</style></head><body><main><header><div><h1>Banking Operations AI</h1><div class='header-meta'>{html.escape(name)} · {html.escape(role)}</div></div><form method='post'><input type='hidden' name='action' value='logout'><button class='logout'>Sign out</button></form></header><div class='message'>{html.escape(message)}</div><div class='content'>{''.join(sections)}<section class='card'><div class='card-head'><div><h2>Approval queue</h2><p>Open approvals routed to the current workflow.</p></div><span class='badge'>Queue</span></div><ul>{approvals}</ul></section></div></main></body></html>"""

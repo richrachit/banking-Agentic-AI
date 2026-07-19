@@ -7,6 +7,12 @@ from dataclasses import dataclass
 class PolicyConfig:
     income_variance_tolerance: float = 0.10
     outreach_lead_days: int = 30
+    # Illustrative credit-policy thresholds. A bank must approve/version these.
+    credit_score_reject_below: int = 650
+    credit_score_proceed_at_or_above: int = 750
+    # True only to demonstrate the requested low-score path in this local app.
+    # Production should default to False until Board-approved policy and legal review.
+    auto_reject_low_credit_score: bool = True
     # Illustrative only: confirm approved legal/policy periods before production use.
     dormancy_days_by_jurisdiction: dict[str, int] | None = None
     transfer_wait_days_by_jurisdiction: dict[str, int] | None = None
