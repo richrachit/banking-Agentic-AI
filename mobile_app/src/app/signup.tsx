@@ -7,7 +7,8 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const roles = (Object.keys(roleLabels) as UserRole[]).map((value) => ({ value, label: roleLabels[value] }));
+const signupRoles: UserRole[] = ['CUSTOMER', 'LOAN', 'CREDIT', 'COMPLIANCE'];
+const roles = signupRoles.map((value) => ({ value, label: roleLabels[value] }));
 
 export default function SignupScreen() {
   const { session, loading, signup } = useAuth();
@@ -20,6 +21,7 @@ export default function SignupScreen() {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [createdStatus, setCreatedStatus] = useState('');
 
   if (loading) return <SafeAreaView style={styles.safe}><LoadingState /></SafeAreaView>;
   if (session) return <Redirect href="/dashboard" />;
@@ -31,8 +33,12 @@ export default function SignupScreen() {
     setSubmitting(true);
     setError('');
     try {
-      await signup({ display_name: displayName.trim(), email: email.trim(), username: username.trim(), password, user_type: role });
-      router.replace({ pathname: '/login', params: { created: '1' } });
+      const status = await signup({ display_name: displayName.trim(), email: email.trim(), username: username.trim(), password, user_type: role });
+      if (status === 'ACTIVE') {
+        router.replace({ pathname: '/login', params: { created: '1' } });
+      } else {
+        setCreatedStatus(status);
+      }
     } catch (value) {
       setError(value instanceof Error ? value.message : 'Account creation failed.');
     } finally {
@@ -52,13 +58,14 @@ export default function SignupScreen() {
               <Text style={styles.body}>Access is role-scoped after authentication. Production deployments should provision staff through the bank identity provider.</Text>
             </View>
             {error ? <Banner tone="error" body={error} /> : null}
+            {createdStatus ? <Banner tone="success" title="Access request submitted" body="Your staff profile is pending administrator activation. You can sign in only after an administrator approves the request." /> : null}
             <ChoiceChips label="User type" options={roles} value={role} onChange={setRole} />
             <Field label="Full name" value={displayName} onChangeText={setDisplayName} autoCapitalize="words" textContentType="name" />
             <Field label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" textContentType="emailAddress" />
             <Field label="Username" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
             <Field label="Password" hint="Use at least 10 characters." value={password} onChangeText={setPassword} secureTextEntry textContentType="newPassword" />
             <Field label="Confirm password" value={confirm} onChangeText={setConfirm} secureTextEntry textContentType="newPassword" onSubmitEditing={submit} />
-            <Button label="Create account" loading={submitting} onPress={submit} />
+            <Button label={createdStatus ? 'Request submitted' : 'Create account'} disabled={Boolean(createdStatus)} loading={submitting} onPress={submit} />
             <Button label="Already registered? Sign in" variant="ghost" onPress={() => router.replace('/login')} />
           </Card>
         </ScrollView>
@@ -77,4 +84,3 @@ const styles = StyleSheet.create({
   title: { color: colors.ink, fontSize: 30, lineHeight: 36, fontWeight: '900', letterSpacing: -1 },
   body: { color: colors.muted, fontSize: 14, lineHeight: 21 },
 });
-

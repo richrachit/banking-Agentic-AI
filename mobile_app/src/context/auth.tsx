@@ -10,7 +10,7 @@ type AuthContextValue = {
   session: Session | null;
   loading: boolean;
   login: (input: LoginInput) => Promise<void>;
-  signup: (input: SignupInput) => Promise<void>;
+  signup: (input: SignupInput) => Promise<string>;
   logout: () => Promise<void>;
 };
 
@@ -45,7 +45,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, []);
 
   const signup = useCallback(async (input: SignupInput) => {
-    await apiRequest('/api/v1/auth/signup', { method: 'POST', ...jsonBody(input) });
+    const result = await apiRequest<{ status: string }>('/api/v1/auth/signup', { method: 'POST', ...jsonBody(input) });
+    return result.status;
   }, []);
 
   const logout = useCallback(async () => {
@@ -66,4 +67,3 @@ export function useAuth() {
   if (!value) throw new Error('useAuth must be used inside AuthProvider.');
   return value;
 }
-

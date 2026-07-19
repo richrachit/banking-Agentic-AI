@@ -1,16 +1,23 @@
 {
   "expo": {
-    "name": "mobile_app",
-    "slug": "mobile_app",
+    "name": "Banking Operations AI",
+    "slug": "banking-operations-ai",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "description": "Role-aware mobile banking operations workspace for loan exception and dormant-account workflows.",
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobileapp",
-    "userInterfaceStyle": "automatic",
+    "scheme": "bankopsai",
+    "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "supportsTablet": true,
+      "bundleIdentifier": "com.agenticbank.bankingoperationsai",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.agenticbank.bankingoperationsai",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -28,7 +35,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#074E4B",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }

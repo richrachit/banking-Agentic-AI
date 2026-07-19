@@ -1,208 +1,233 @@
-# Current Workflow Reference
+# Workflow Reference
 
-This document reflects the current local demo implementation in the repository, including the browser UI, loan exception handling, dormancy lifecycle management, and the automation supervisor.
+This document describes the workflows that the current code executes, including their human-control boundaries and known local-demo gaps.
 
-## 1. End-to-end flow
+## 1. Personas and responsibilities
 
-1. A user signs in through the web UI and selects a role such as Customer, Loan Operations, Credit Manager, Compliance Officer, or Administrator.
-2. A Customer submits a new loan application. The app creates a loan record, stores uploaded documents, and starts the workflow in the `HELD` state.
-3. The loan agent evaluates the exception code:
-   - `MISSING_DOCUMENT`: checks document completeness and requests the missing evidence.
-   - `VERIFY_TRANSIENT_FAILURE`: retries verification and may recover after a second pass.
-   - `INCOME_VARIANCE`: auto-resolves when within policy tolerance, or routes a deviation approval when it exceeds tolerance.
-4. If a human approval is required, the repository creates an approval record and the workflow pauses until the designated role decides.
-5. Once approved, the loan either returns to the main journey or remains pending for follow-up based on the decision.
-6. The dormancy workflow processes active accounts, starts outreach, classifies dormant accounts, creates transfer approvals, executes approved transfers, and supports later claims.
-7. The automation controller runs a cycle over both loan and account workflows, executes approved transfers/claims, and reports pending human actions.
+| Persona | Starts/owns | Can decide | Cannot do |
+| --- | --- | --- | --- |
+| Customer | Own loan application, document upload, own-account reactivation request | Consent to bureau lookup; supply requested evidence | Run staff agents, see another customer's data, approve/release funds |
+| Loan Operations | Exception investigation, evidence update, agent run, automation cycle | Operational reject/reopen actions in the browser workflow | Approve credit deviations or compliance transfers |
+| Credit Manager | Credit-score review and loan-deviation queue | Matching `credit.manager` approvals | Transfer unclaimed balances or disburse a loan |
+| Compliance Officer | Dormancy assessment, transfer/reactivation queue, automation cycle | Matching `compliance.officer` approvals | Approve credit deviations |
+| Claims Officer | Claim review in the domain/CLI workflow | Matching `claims.officer` approval | Other approval types |
+| Administrator | Local cross-system/model view and demo automation | Current API permits any approval | Must not retain business-approval bypass in production |
 
-## 2. Current loan state machine
+## 2. Loan application and AI start point
 
-`HELD -> AWAITING_CUSTOMER -> AWAITING_APPROVAL -> READY_FOR_MAIN_JOURNEY -> REJECTED/REOPENED`
+```text
+Customer
+  1. Authenticates and submits applicant, financial, product and consent facts
+  2. Does not supply an application ID or credit score
+       |
+Repository
+  3. Generates application ID and stores HELD application
+       |
+AI/automation begins
+  4. Credit Bureau Agent obtains a consent-gated provider result
+  5. Score policy routes to reject, human review, or continued checks
+  6. Document/exception agent diagnoses evidence and verification state
+       |
+Human-controlled boundary
+  7. Customer supplies evidence, or Credit Manager decides a package
+       |
+Normal lending systems (future integration)
+  8. Affordability/fraud/underwriting, offer, eSign, operations and disbursement
+```
 
-### What happens in each state
+`banking_agents/progression.py` exposes eight user-facing stages. The first AI-active stage is **Consent and credit-bureau assessment**, immediately after application submission. The progression is explanatory; persisted loan status and approval records are the source of truth.
 
-- `HELD`: initial state for newly created customer loan requests.
-- `AWAITING_CUSTOMER`: used when the agent needs more evidence or a customer response.
-- `AWAITING_APPROVAL`: used when a policy deviation needs a credit decision.
-- `READY_FOR_MAIN_JOURNEY`: used after successful resolution or after an approved deviation.
-- `REJECTED`: used when an application is rejected by AI or operations review.
-- `REOPENED`: used when a rejected or stalled application is reopened for resubmission or re-review.
+## 3. Consent and CIBIL-style score workflow
 
-### Current exception handling
+### Current local sequence
 
-| Exception code | Current behavior |
-| --- | --- |
-| `MISSING_DOCUMENT` | Verifies required documents for the product and requests any missing or invalid items. |
-| `VERIFY_TRANSIENT_FAILURE` | Retries verification; if the second attempt succeeds, the loan is released. |
-| `INCOME_VARIANCE` | Resolves automatically when within policy tolerance; otherwise creates a credit approval package. |
-| Review action | Approve, reject, or reopen the loan directly from the dashboard queue. |
+1. The customer sends `credit_bureau_consent=true` and a PAN-shaped lookup value.
+2. `LoanOriginationService` persists the loan before requesting the score.
+3. `LocalCreditBureauProvider` refuses the lookup without consent.
+4. The provider validates PAN format, converts it to an HMAC-SHA256 subject key, and reads a fictional fixture from `data/credit_bureau.sqlite3`.
+5. The agent records the supported consent version, fixed purpose, and UTC time on the loan and in the audit log.
+6. The provider records application ID, hashed subject, result, provider reference, consent boolean, version, purpose, and timestamp. Raw PAN is not stored in that SQLite database.
+7. `CreditBureauDecisionAgent` writes score/band/provider/reference/timestamp/decision metadata to the loan, appends an audit event, and applies the policy matrix.
 
-## 3. Current dormancy lifecycle
+Run the fictional fixture seed once for a clean local environment:
 
-`ACTIVE -> OUTREACH -> DORMANT -> TRANSFER_PENDING -> TRANSFERRED -> CLAIM_PENDING -> CLAIM_PAID`
+```powershell
+.\.venv\Scripts\python.exe scripts\seed_credit_bureau_demo.py
+```
 
-### Current behavior
+### Current policy matrix
 
-1. The agent evaluates each account against the jurisdiction policy and the last customer activity date.
-2. When the account is approaching the dormancy threshold, it marks the account as `OUTREACH` and records re-engagement activity.
-3. When the inactivity threshold is reached, it marks the account as `DORMANT` and calculates a transfer due date.
-4. Once the transfer due date is reached, it creates a compliance approval package for the transfer.
-5. After an approved transfer, the account moves to `TRANSFERRED` and later supports a customer claim.
-6. Claims are only accepted after the transfer exists and identity/entitlement validation is successful.
+| Provider result | Band | Loan status | Next owner |
+| --- | --- | --- | --- |
+| `300–649` | `LOW` | `REJECTED` when the local demo auto-reject flag is enabled | Customer may create `CREDIT_RECONSIDERATION`; full dispute/grievance integration remains external |
+| `650–749` | `REVIEW` | `AWAITING_APPROVAL` | `credit.manager` via `CREDIT_SCORE_REVIEW` |
+| `750–900` | `HIGH` | Temporarily `HELD`, then exception workflow runs | AI/document workflow; this is not approval |
+| No score returned | `NO_HISTORY` | `AWAITING_APPROVAL` | `credit.manager`; no-history is not converted to zero |
+| Provider/fixture missing | n/a | `AWAITING_APPROVAL` and `CREDIT_BUREAU_UNAVAILABLE` | Credit Manager coordinates manual retrieval/retry; never auto-reject |
 
-## 4. Approval routing in the current app
+The `<650` and `>=750` values are illustrative `PolicyConfig` values. CIBIL supplies a risk signal, while the lender owns its credit policy and final decision. CIBIL describes scores in the 300–900 range and higher values as lower risk; the [CIBIL FAQ](https://www.cibil.com/faq/understand-your-credit-score-and-report) and [Consumer Credit Risk Assessment product page](https://apimarketplace.transunioncibil.com/products/credit-data/consumer-credit-risk-assessment) should be read alongside the bank's approved policy.
 
-| Action | Current required role |
-| --- | --- |
-| Loan policy deviation | `credit.manager` |
-| Unclaimed balance transfer | `compliance.officer` |
-| Customer reclaim payment | `claims.officer` |
+### Consent/adverse-action controls and remaining gaps
 
-The approval queue is displayed in the dashboard and is persisted in the repository as part of the local workflow state.
+RBI's [Digital Lending Directions, 2025](https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12848&Mode=0) call for need-based data collection with prior explicit consent and an audit trail, purpose disclosure, and consent choices. The local form/API enforces consent and stores its supported version, fixed purpose, and time with the loan/audit/check. It does not yet implement a separately signed/hashed consent-evidence object, denial/revocation/deletion lifecycle, or immutable retention. The PostgreSQL target has the required data shape; its repository is not implemented.
 
-## 5. Document verification flow
+For a customer-owned low-score rejection, `POST /loan-applications/{id}/credit-review-requests` creates a `CREDIT_RECONSIDERATION` package containing the customer's reason and optional bureau dispute reference. It does not reverse the decision without Credit Manager approval. This local route is only part of the required production process, which also needs approved reason codes, bureau-data correction/dispute guidance, complaint handling, and non-retaliatory processing.
 
-The current document verification model checks product-based document requirements:
+The approval endpoint now applies credit follow-on state: approved `CREDIT_SCORE_REVIEW`, `CREDIT_BUREAU_UNAVAILABLE`, or `CREDIT_RECONSIDERATION` cases re-enter the document/exception workflow; rejected cases retain an adverse state and decision note. The local follow-on is synchronous. Production needs idempotent asynchronous execution, retry/reconciliation, and explicit provider-retry behavior.
 
-| Product | Required documents |
+## 4. Loan document workflow
+
+### Product requirements
+
+| Product | Required evidence |
 | --- | --- |
 | `PERSONAL` | PAN, Aadhaar, address proof, bank statement, income proof |
-| `HOME` | Personal requirements plus property document |
+| `HOME` | Personal set plus property document |
 | `BUSINESS` | PAN, Aadhaar, business registration, bank statement, financial statement |
 
-The form accepts evidence entries in the form `DOCUMENT:STATUS`, such as `PAN:VALID,AADHAAR:EXPIRED`. Accepted statuses are `VALID`, `PENDING`, `INVALID`, `EXPIRED`, and `UNREADABLE`.
+Evidence status is one of `VALID`, `PENDING`, `INVALID`, `EXPIRED`, or `UNREADABLE`.
 
-## 6. Automation cycle
+### Upload and review sequence
 
-The automation supervisor runs the workflow in a safe, human-gated loop:
+1. During application creation, `uploaded_document_types` creates `PENDING` metadata only.
+2. A customer/Loan Operations/Admin uploads each file separately through the web form or multipart API.
+3. The local adapter accepts PDF/PNG/JPG up to 10 MiB and saves it in `data/uploads/<application-id>/`.
+4. `DocumentVerificationModel` compares product requirements to evidence metadata.
+5. Missing or non-valid evidence produces an exact customer request and `AWAITING_CUSTOMER`.
+6. An optional document-AI provider can add classification/extraction/quality/tamper-review observations, but cannot set authenticity or approve the loan.
+7. KYC requires approved external verification; local format/checksum or face-match signals alone are insufficient.
 
-- it processes held loans,
-- applies approved loan deviations,
-- evaluates dormancy status,
-- executes approved transfers and claims,
-- and reports pending human approvals.
+Local file upload checks the type allowlist and PDF/PNG/JPEG magic bytes against the extension. It still does not include malware scanning, full MIME/container validation, encryption, OCR, issuer verification, or authenticity detection. Do not upload real documents.
 
-The automation agent does not bypass the approval gate for deviations or money movement.
-
-## 7. Customer-to-disbursement progression
-
-1. Customer submits a loan request and product-specific documents.
-2. **AI starts:** mandatory-data validation, document classification/extraction, integrity checks, and evidence requests.
-3. **AI continues:** affordability, credit/fraud adapter signals, and an explainable policy recommendation.
-4. Human review is mandatory for deviations, medium confidence, fraud signals, high-value loans, and every financial action.
-5. Customer eSigns; Operations disburses only after all controls and approvals pass.
-
-The application-detail screen shows this progression and marks the AI-owned stages.
-
-## 8. AI-agent execution sequence
-
-### Loan exception sequence
-
-1. **Loan Exception Agent** reads the held application's exception code.
-2. **Document Verification Model** calculates required evidence for the product.
-3. **Document AI Pipeline** may provide OCR/classification/tamper-review signals; its default result remains pending.
-4. **India KYC AI Agent** requests approved issuer PAN, Aadhaar/OVD, CKYCR, sanctions, or V-CIP verification when required.
-5. The Loan Exception Agent resolves permitted conditions, requests evidence, retries transient checks, or creates a Credit Manager package.
-6. **Operations Automation Agent** runs the cycle when new evidence or approval is available.
-
-### Dormant-account sequence
-
-1. **Dormancy Agent** evaluates inactivity against the jurisdiction policy.
-2. It records outreach and calculates the dormancy/transfer clock.
-3. On the due date it creates a Compliance Officer package; it does not transfer money yet.
-4. After approval, it executes the transfer and retains claim information.
-5. **Operations Automation Agent** coordinates scheduled runs and reports unresolved human tasks.
-
-## 9. AI outcome meanings
-
-| Outcome | Meaning | Next step |
-| --- | --- | --- |
-| `READY_FOR_MAIN_JOURNEY` | An in-policy condition is resolved. | Continue normal LOS journey. |
-| `AWAITING_CUSTOMER` | Evidence, consent, or customer action is missing. | Send a precise request. |
-| `AWAITING_APPROVAL` | Policy or compliance authority is required. | Route to the named role. |
-| `PENDING_EXTERNAL_VERIFICATION` | KYC needs an approved integration. | Run issuer/CKYCR/V-CIP verification. |
-| `MANUAL_REVIEW` | Fraud, KYC, low confidence, or conflict requires review. | Escalate to the authorised team. |
-
-AI recommendations are workflow inputs, not final KYC, regulatory, credit, or payment decisions.
-
-## 10. Role-by-role browser workflow
-
-### Customer
-
-1. Opens the responsive home page, signs up or signs in, and lands on a customer dashboard.
-2. Completes the loan form and supplies product-specific document uploads in separate fields.
-3. On submission, the application ID is generated by the repository and the loan starts in `HELD`.
-4. The dashboard shows the application, current state, diagnosis, and a link to the progression screen.
-5. If evidence is missing, the application is `AWAITING_CUSTOMER`; the customer supplies the requested information through the customer workflow.
-6. For an inactive/dormant account, the customer submits a reactivation request and confirms KYC currency. The request is audited and routed for compliance review; it does not reactivate the account automatically.
-
-### Loan Operations
-
-1. Opens the operations dashboard and views exception, pending, and reopen queues.
-2. Supplies application facts, document evidence, and the selected exception code where an upstream LOS has raised a hold.
-3. The Loan Exception Agent diagnoses the case and either requests evidence, retries a transient verification, resolves an in-policy condition, or creates an approval package.
-4. The operator can use the review/reopen queue while preserving the reason and audit trail.
-
-### Credit Manager
-
-1. Receives `LOAN_DEVIATION` cases whose calculated variance exceeds policy tolerance.
-2. Opens the application progression/evidence context, records `APPROVED` or `REJECTED`, and adds a decision note.
-3. An approved deviation returns the application to the main journey; rejected/reopened cases remain visible for follow-up.
-
-### Compliance Officer
-
-1. Runs a dormancy lifecycle assessment using account, jurisdiction, balance, last activity, and as-of date.
-2. Reviews outreach/dormancy cases and transfer packages when their statutory/policy due date arrives.
-3. Approves or rejects the transfer package. The transfer is not executed before that approval.
-4. Reviews customer reactivation requests and later claim workflows using the recorded evidence.
-
-### Administrator
-
-The Administrator can view the cross-role dashboard and operational queues. In a production deployment this role should administer access, policies, model versions, and monitoring—not become an implicit approval bypass.
-
-## 11. Detailed loan workflow and decision points
+## 5. Loan exception state machine
 
 ```text
-Customer application / LOS exception
-    -> application persisted as HELD
-    -> AI data + document validation begins
-    -> document/KYC/verification evidence assessed
-    -> in-policy resolution -> READY_FOR_MAIN_JOURNEY
-       missing evidence -> AWAITING_CUSTOMER -> resubmission -> reassess
-       policy variance -> AWAITING_APPROVAL -> Credit decision
-       adverse/rejected -> REJECTED -> optional REOPENED -> reassess
-    -> normal LOS journey, eSign, operations disbursement (future adapter boundary)
+HELD
+  +-- missing/non-valid evidence ------> AWAITING_CUSTOMER
+  |                                         |
+  |                              evidence supplied + reassess
+  |
+  +-- out-of-policy variance ----------> AWAITING_APPROVAL
+  |                                         |
+  |                              Credit Manager decision
+  |
+  +-- recovered/in-policy condition ---> READY_FOR_MAIN_JOURNEY
+
+Any authorised adverse review ----------> REJECTED
+Rejected/stalled browser case ----------> REOPENED -> reassess
 ```
 
-The AI begins after a loan is created, at data/document validation. It can create specific customer work requests and explain the workflow state, but it cannot complete eKYC, approve a deviation, sign an agreement, or release funds. The application-detail page exposes this sequence and marks AI-owned stages.
+`READY_FOR_MAIN_JOURNEY` only means the demonstrated exception is resolved. It does not mean underwriting approval, eSign, sanction, account creation, or disbursement has occurred.
 
-## 12. Detailed dormant-account workflow and decision points
+### Exception behavior
+
+| Exception code | Agent diagnosis/action | Human boundary |
+| --- | --- | --- |
+| `MISSING_DOCUMENT` | Calculates product requirements and requests missing/pending/invalid/expired/unreadable evidence | Customer supplies new evidence; authenticity/KYC review remains external/human |
+| `VERIFY_TRANSIENT_FAILURE` | Performs the permitted retry path and releases a recovered check | Persistent/provider errors require operations/integration handling |
+| `INCOME_VARIANCE` | Compares declared and verified income to 10% illustrative tolerance | Outside tolerance creates `LOAN_DEVIATION` for `credit.manager` |
+| Unsupported condition | Leaves a diagnosable unresolved case | Authorised operations/policy owner handles it |
+
+Loan exception cases are persisted separately for local history/idempotency support. Real LOS updates need transaction/outbox semantics and idempotency keys.
+
+## 6. Loan approval workflow
+
+1. The agent creates an `Approval` containing type, loan ID, required role, and evidence package.
+2. The loan becomes `AWAITING_APPROVAL`.
+3. Credit Manager sees only `credit.manager` work through the API's role filter.
+4. The decision endpoint validates `APPROVED`/`REJECTED`, required role, pending state, actor, and rejection note, then writes the approval/audit event.
+5. A score-review/reconsideration approval resumes document/exception checks; a loan-deviation approval returns the loan to its permitted journey. Rejection records the adverse outcome.
+6. `LoanExceptionAgent.approve_application()` refuses to bypass an awaiting/rejected bureau or Credit Manager decision, even if Loan Operations calls it directly.
+
+There is no implemented disbursement endpoint. Operations, agreement, eSign, sanction, and repayment are future adapters.
+
+## 7. Dormant-account lifecycle
 
 ```text
-Scheduled assessment / compliance submission
-    -> compare last customer activity with jurisdiction policy
-    -> approaching threshold: OUTREACH + recorded channel attempt
-    -> threshold reached: DORMANT + transfer clock
-    -> due date: TRANSFER_PENDING + compliance package
-    -> compliance approval: TRANSFERRED
-    -> customer claim: CLAIM_PENDING -> validated entitlement -> CLAIM_PAID
+ACTIVE
+  -> OUTREACH
+  -> DORMANT
+  -> TRANSFER_PENDING
+  -> TRANSFERRED
+  -> CLAIM_PENDING
+  -> CLAIM_PAID
 ```
 
-The workflow is jurisdiction-policy driven. The code is a controlled reference for the lifecycle and does not file directly with RBI/DEA, send real messages, or move money. Real filing, payment, and customer-contact integrations need bank-approved adapters, reconciliation, and maker-checker controls.
+### Scheduled lifecycle
 
-## 13. Data writes and audit trail
+1. Compliance/API/automation supplies an account's jurisdiction, balance, last customer activity, and as-of date.
+2. `DormancyAgent` compares inactivity to the configured jurisdiction clock.
+3. Within the outreach lead window it records re-engagement and moves the account to `OUTREACH`.
+4. At the dormancy threshold it marks `DORMANT` and calculates `transfer_due_on`.
+5. When due, it creates an `UNCLAIMED_TRANSFER` package and moves to `TRANSFER_PENDING`.
+6. A `compliance.officer` decision is required.
+7. The approved local path records transfer state/amount. No external payment, filing, or regulator acknowledgement occurs.
+8. A later claim requires validated entitlement and `claims.officer` approval before local `CLAIM_PAID` state.
 
-Each workflow action writes state through `LocalRepository` and appends an audit event through `AuditLog`. The active local demo uses `data/state.json`, `data/audit.jsonl`, user data in `data/users.json`, and SQLite case stores for exception/dormancy history. The PostgreSQL production target is defined in `database/schema.sql`.
+Jurisdiction differences and effective-date changes must be represented as compliance-approved, versioned policy. The included `IN-RBI-DEA` configuration is illustrative and must not be treated as legal advice or a current filing rule.
 
-| Workflow event | Active state written | Target PostgreSQL records |
+### Customer reactivation
+
+1. The authenticated customer lists only accounts matching their `customer_id`.
+2. The customer selects an account and confirms current KYC.
+3. The API rejects another customer's account as `404` and rejects `kyc_confirmed=false` as `422`.
+4. A valid request creates `ACCOUNT_REACTIVATION` for `compliance.officer` and appends an audit event.
+5. Compliance approval moves the local account to `ACTIVE`, clears dormancy/transfer dates, refreshes last activity, and rejects any pending transfer package. Approved KYC/core-banking execution remains a production integration.
+
+## 8. Automation cycle
+
+`OperationsAutomationAgent` is a bounded supervisor:
+
+1. Iterate eligible held/open loan cases.
+2. Delegate each to `LoanExceptionAgent`.
+3. Apply only already-approved deviation actions.
+4. Evaluate dormant accounts at the supplied as-of date.
+5. Execute only already-approved transfer/claim states.
+6. Return a run summary and pending human actions.
+
+It is callable by `LOAN`, `COMPLIANCE`, and `ADMIN` through the API. The caller's ability to start a cycle does not grant authority to create an approval outcome.
+
+## 9. API-to-workflow mapping
+
+| User intent | Endpoint | Workflow effect |
 | --- | --- | --- |
-| Loan submitted/updated | Loan record and evidence | `loan_application`, `loan_document`, `workflow_step`, `immutable_audit_event` |
-| Loan exception/approval | Loan status and approval | `approval_case`, `workflow_step`, `immutable_audit_event` |
-| Dormancy/outreach | Account status and lifecycle evidence | `dormant_account_case`, `outreach_attempt`, `workflow_step` |
-| Transfer/claim decision | Approval and account state | `approval_case`, `dormant_account_case`, `immutable_audit_event` |
+| Apply for loan | `POST /api/v1/loan-applications` | ID → consent/bureau → score branch → exception agent when high |
+| Track application | `GET /api/v1/loan-applications/{id}` | Returns state plus eight-stage progression |
+| Request low-score reconsideration | `POST /api/v1/loan-applications/{id}/credit-review-requests` | Creates `CREDIT_RECONSIDERATION` for Credit Manager |
+| Supply document | `POST /api/v1/loan-applications/{id}/documents` | Local file + `PENDING` evidence; no automatic re-run |
+| Re-run exception work | `POST /api/v1/loan-applications/{id}/run-exception-agent` | Loan Ops/Admin diagnosis and state update |
+| Review approvals | `GET /api/v1/approvals` | Role-scoped queue |
+| Decide approval | `POST /api/v1/approvals/{id}/decision` | Records authority result and applies the matching local credit/loan/reactivation/transfer/claim transition |
+| View owned accounts | `GET /api/v1/accounts` | Customer ownership filter or staff view |
+| Request reactivation | `POST /api/v1/accounts/{id}/reactivation-requests` | Compliance package; no immediate reactivation |
+| Run dormancy | `POST /api/v1/dormancy/cycles` | Save/evaluate supplied account facts |
+| Run supervisor | `POST /api/v1/automation/cycles` | Bounded cross-workflow cycle |
 
-## 14. UI progression and responsive behavior
+## 10. Data and audit sequence
 
-The landing page, authentication screens, dashboards, loan form, dormant-account service, and loan-detail page are designed for desktop, tablet, and mobile widths. Tablet layouts reduce multi-column panels; phone layouts stack form fields and dashboard metrics, make sign-out full width, and preserve data-table access through horizontal scrolling. The displayed workflow progression is explanatory; the persisted state and approval records remain the source of truth.
+Each current operation can write one or more local stores:
 
-For code-level agent inputs, model boundaries, local storage, and the PostgreSQL target contract, see [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md).
+| Workflow concern | Local source of truth/history | PostgreSQL target |
+| --- | --- | --- |
+| Loan/account/approval state | `data/state.json` | `loan_application`, `dormant_account_case`, `approval_case` |
+| Bureau fixture and check | `data/credit_bureau.sqlite3` | `credit_bureau_consent`, `credit_bureau_enquiry`, `credit_policy_decision` |
+| Exception/document cases | `data/loan_exception_cases.sqlite3` | `loan_document`, `workflow_step` |
+| Dormancy/outreach/filing | `data/dormancy_cases.sqlite3` | `outreach_attempt`, `workflow_step` |
+| Actor/action trail | `data/audit.jsonl` | `immutable_audit_event` plus WORM store |
+| Model lifecycle | `data/model_training.sqlite3`, `data/models/` | `ai_model_catalog`, `ai_training_example`, `ai_training_run`, `ai_model_prediction`, artifact registry |
+
+The local writes are not one atomic transaction. Production needs transactional state/outbox, retries, reconciliation, and duplicate protection across every external side effect.
+
+## 11. Outcome meanings
+
+| Outcome/state | Exact meaning |
+| --- | --- |
+| `HELD` | Application is persisted and an automated/operational check remains |
+| `AWAITING_CUSTOMER` | Specific evidence or action is required from the customer |
+| `AWAITING_APPROVAL` | Named human authority is required |
+| `READY_FOR_MAIN_JOURNEY` | Demonstrated exception resolved; continue normal LOS controls |
+| `REJECTED` | Current local policy/reviewer stopped the application; no funds released |
+| `PENDING_EXTERNAL_VERIFICATION` | KYC needs an approved external provider/process |
+| `MANUAL_REVIEW` | Risk/conflict/low-confidence condition needs authorised review |
+
+For API fields and security behavior, see [API.md](API.md). For code-level agent/model boundaries, see [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md) and [MODEL_TRAINING.md](MODEL_TRAINING.md).

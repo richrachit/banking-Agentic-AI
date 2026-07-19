@@ -62,6 +62,7 @@ POST/form application
   -> CreditBureauDecisionAgent asks provider (explicit consent required)
        LOW + enabled demo rule -> REJECTED
        REVIEW / NO_HISTORY -> CREDIT_SCORE_REVIEW approval
+       UNAVAILABLE -> CREDIT_BUREAU_UNAVAILABLE approval (never auto-reject)
        HIGH -> retain HELD and continue
   -> LoanExceptionAgent diagnoses documents/verification/variance
   -> repository state + case history + audit event
@@ -70,7 +71,9 @@ POST/form application
 
 The `HIGH` branch means “continue checks,” never “approve.” The local low-score auto-rejection exists to demonstrate the requested workflow and is controlled by `PolicyConfig.auto_reject_low_credit_score`. Production should default this off until policy, legal, compliance, fairness, reason-code, and grievance controls are approved.
 
-The local bureau adapter is deliberately fictional. It HMAC-hashes PAN for fixture lookup and stores the result/reference, but the default key is unsafe and the request's `consent_version` is not yet persisted in a dedicated record. The target schema corrects the data shape with consent, enquiry, and policy-decision entities; an implementation is still required.
+A low-score customer can create a `CREDIT_RECONSIDERATION` request. Credit Manager approval resumes exception checks; rejection retains the adverse state. The same approval endpoint resumes approved intermediate/no-history/unavailable cases, while Loan Operations is explicitly prevented from bypassing those credit decisions.
+
+The local bureau adapter is deliberately fictional. It HMAC-hashes PAN for fixture lookup and stores the result/reference; the loan, audit event, and check row now retain the supported consent version, purpose, and time. The default HMAC key remains unsafe, and the runtime still lacks a dedicated signed/hashed consent-evidence entity and revocation lifecycle. The target schema provides separate consent, enquiry, and policy-decision entities; its repository still needs implementation.
 
 ## 5. Dormant-account transaction sequence
 
@@ -221,4 +224,3 @@ RBI's [Digital Lending Directions, 2025](https://www.rbi.org.in/Scripts/Notifica
 ```
 
 See [API.md](API.md), [WORKFLOWS.md](WORKFLOWS.md), [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md), and [MODEL_TRAINING.md](MODEL_TRAINING.md) for detailed contracts.
-

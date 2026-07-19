@@ -11,9 +11,18 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 
 
 class UserRegistry:
+    reserved_local_usernames = {
+        "customer",
+        "loan.ops",
+        "credit.manager",
+        "compliance.officer",
+        "admin",
+    }
+
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -21,11 +30,25 @@ class UserRegistry:
             path.write_text("{}", encoding="utf-8")
 
     def register(self, username: str, password: str, display_name: str, email: str, role: str) -> str:
+        username = username.strip()
+        display_name = display_name.strip()
+        email = email.strip()
+        role = role.strip().upper()
         users = json.loads(self.path.read_text(encoding="utf-8"))
+        if not re.fullmatch(r"[A-Za-z0-9._-]{3,64}", username):
+            raise ValueError("Username must be 3-64 letters, numbers, dots, underscores, or hyphens.")
+        if username.lower() in self.reserved_local_usernames:
+            raise ValueError("Username is reserved by a local demo account.")
         if username in users:
             raise ValueError("Username is already registered.")
         if len(password) < 10:
             raise ValueError("Password must contain at least 10 characters.")
+        if len(password) > 256:
+            raise ValueError("Password must not exceed 256 characters.")
+        if not display_name or len(display_name) > 100:
+            raise ValueError("Display name must contain 1-100 characters.")
+        if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise ValueError("Enter a valid email address.")
         if role not in {"CUSTOMER", "LOAN", "CREDIT", "COMPLIANCE"}:
             raise ValueError("Unsupported signup role.")
         salt = os.urandom(16)

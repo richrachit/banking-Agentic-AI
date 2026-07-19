@@ -56,10 +56,26 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("reopened", reopened.diagnosis.lower())
 
     def test_approved_loan_can_be_returned_to_main_journey(self):
-        self.repo.seed([LoanApplication("L4", "INCOME_VARIANCE", declared_income=100, verified_income=70, status=LoanStatus.AWAITING_APPROVAL.value)], [])
+        self.repo.seed([LoanApplication("L4", "INCOME_VARIANCE", declared_income=100, verified_income=70, status=LoanStatus.REOPENED.value)], [])
         agent = self.loan_agent()
         agent.approve_application("L4", "Approved by operations")
         self.assertEqual(self.repo.get_loan("L4").status, LoanStatus.READY_FOR_MAIN_JOURNEY.value)
+
+    def test_operations_cannot_bypass_credit_manager_gate(self):
+        self.repo.seed(
+            [
+                LoanApplication(
+                    "L5",
+                    "MISSING_DOCUMENT",
+                    status=LoanStatus.REJECTED.value,
+                    credit_score_decision="REJECTED_LOW_SCORE",
+                )
+            ],
+            [],
+        )
+        with self.assertRaisesRegex(ValueError, "Credit Manager"):
+            self.loan_agent().approve_application("L5", "Manual override")
+        self.assertEqual(self.repo.get_loan("L5").status, LoanStatus.REJECTED.value)
 
     def test_automation_routes_loan_and_preserves_human_gate(self):
         self.repo.seed([LoanApplication("L2", "INCOME_VARIANCE", declared_income=100, verified_income=70)], [])

@@ -52,6 +52,14 @@ class LoanExceptionAgent:
         # Feature: direct approve action from the dashboard review queue.
         # Database connection: updates the loan status in data/state.json.
         loan = self.repository.get_loan(application_id)
+        if loan.status == LoanStatus.AWAITING_APPROVAL.value or loan.credit_score_decision in {
+            "REJECTED_LOW_SCORE",
+            "HUMAN_REVIEW",
+            "HUMAN_REVIEW_BUREAU_UNAVAILABLE",
+            "HUMAN_REVIEW_REJECTED",
+            "LOW_SCORE_RECONSIDERATION_REJECTED",
+        }:
+            raise ValueError("A Loan Operations action cannot bypass the required Credit Manager decision.")
         loan.status = LoanStatus.READY_FOR_MAIN_JOURNEY.value
         loan.diagnosis = f"Application approved by operations: {reason}"
         self.repository.save_loan(loan)
@@ -63,7 +71,7 @@ class LoanExceptionAgent:
         # Database connection: updates the loan status and audit trail in storage.
         loan = self.repository.get_loan(application_id)
         loan.status = LoanStatus.REJECTED.value
-        loan.diagnosis = f"Application rejected by AI agent: {reason}"
+        loan.diagnosis = f"Application rejected: {reason}"
         self.repository.save_loan(loan)
         self.audit.write("loan-agent", "loan.rejected", application_id, "REJECTED", {"reason": reason})
         return loan

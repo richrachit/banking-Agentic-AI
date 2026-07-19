@@ -18,8 +18,11 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from .audit import AuditLog
-from .auth_service import authenticate_local_user
+from .agent_settings import AgentSettingsStore
+from .auth_service import AuthenticatedUser, authenticate_local_user
 from .automation_agent import OperationsAutomationAgent
+from .chat_agent import BankingSupportChatAgent
+from .chatbot_training import LocalChatbotTrainingDatabase
 from .credit_bureau_agent import CreditBureauDecisionAgent, LocalCreditBureauDatabase, LocalCreditBureauProvider
 from .dormancy_agent import DormancyAgent
 from .loan_agent import LoanExceptionAgent
@@ -33,7 +36,10 @@ from .training_store import ModelTrainingDatabase
 from .user_registry import UserRegistry
 from .models import DormancyStatus, LoanStatus
 
-SESSIONS: dict[str, tuple[str, str, str]] = {}
+# role, display name, username, customer ID. This remains an in-memory local
+# demo session store; production uses the bank identity provider.
+SESSIONS: dict[str, tuple[str, str, str, str]] = {}
+CHAT_HISTORY: dict[str, list[tuple[str, str]]] = {}
 
 
 def field(values: dict[str, list[str]], name: str) -> str:
@@ -46,6 +52,11 @@ def services() -> tuple[LocalRepository, AuditLog, LoanExceptionAgent, DormancyA
     audit = AuditLog(root / "audit.jsonl")
     policy = PolicyConfig()
     return repo, audit, LoanExceptionAgent(repo, audit, policy), DormancyAgent(repo, audit, policy)
+
+
+def require_agent_enabled(model_key: str) -> None:
+    if not AgentSettingsStore(Path.cwd() / "data" / "agent_settings.json").is_enabled(model_key):
+        raise ValueError("This AI agent is disabled by an Administrator. Its dependent workflow is unavailable until re-enabled.")
 
 
 class BankingAppHandler(BaseHTTPRequestHandler):
@@ -74,6 +85,9 @@ class BankingAppHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0"))
+        if length < 0 or length > 85 * 1024 * 1024:
+            self.send_error(413, "Request body is too large.")
+            return
         raw = self.rfile.read(length)
         values, files = self._form_data(raw)
         action = field(values, "action")
@@ -98,8 +112,56 @@ class BankingAppHandler(BaseHTTPRequestHandler):
 
     def _action(self, action: str, values: dict[str, list[str]], role: str, files: dict[str, tuple[str, bytes]]) -> str:
         repo, audit, loan_agent, dormancy_agent = services()
+        if action == "agent_setting":
+            self._allow(role, "ADMIN")
+            model_key = field(values, "model_key")
+            enabled = field(values, "enabled") == "YES"
+            setting = AgentSettingsStore(Path.cwd() / "data" / "agent_settings.json").set_enabled(
+                model_key, enabled, self._current_username()
+            )
+            audit.write(
+                self._current_username(),
+                "ai_agent.setting_changed",
+                model_key,
+                "ENABLED" if enabled else "DISABLED",
+                {"fail_closed_when_disabled": setting["fail_closed_when_disabled"]},
+            )
+            state = "enabled" if enabled else "disabled"
+            return f"{setting['display_name']} is now {state}. Dependent workflows fail closed while disabled."
+        if action == "chat_message":
+            require_agent_enabled("banking_support_chatbot")
+            question = field(values, "message")
+            if not question or len(question) > 1000:
+                raise ValueError("Chat messages must contain between 1 and 1000 characters.")
+            current = AuthenticatedUser(
+                self._current_username(),
+                role,
+                self._session()[1],
+                self._current_customer_id(),
+            )
+            result = BankingSupportChatAgent(repo).respond(question, current)
+            token = self._session_token()
+            history = CHAT_HISTORY.setdefault(token, [])
+            history.extend([("user", question), ("assistant", result.reply)])
+            CHAT_HISTORY[token] = history[-12:]
+            audit.write(
+                current.username,
+                "chat.assistant_responded",
+                f"CHAT-{current.role}",
+                result.intent,
+                {"source": result.source, "read_only": result.read_only},
+            )
+            return "The Banking Support Assistant answered your question."
         if action == "customer_request":
             self._allow(role, "CUSTOMER")
+            require_agent_enabled("credit_bureau_decision_agent")
+            require_agent_enabled("loan_exception_agent")
+            require_agent_enabled("document_verification_rules")
+            pan_for_bureau_lookup = field(values, "pan_for_bureau_lookup")
+            if field(values, "credit_bureau_consent") != "YES":
+                raise ValueError("Explicit credit-bureau consent is required before submission.")
+            if not LocalCreditBureauDatabase.pan_pattern.fullmatch(pan_for_bureau_lookup.upper()):
+                raise ValueError("PAN format is invalid for the credit-bureau lookup.")
             application_id = repo.generate_application_id()
             loan = LoanApplication(
                 application_id, "MISSING_DOCUMENT", loan_product=field(values, "loan_product") or "PERSONAL",
@@ -109,51 +171,121 @@ class BankingAppHandler(BaseHTTPRequestHandler):
                 employer_name=field(values, "employer_name"), monthly_income=float(field(values, "monthly_income") or 0),
                 requested_amount=float(field(values, "requested_amount") or 0), tenure_months=int(field(values, "tenure_months") or 0),
                 loan_purpose=field(values, "loan_purpose"), declared_income=float(field(values, "monthly_income") or 0) * 12,
-                document_evidence=self._save_uploaded_documents(application_id, files),
+                document_evidence={},
                 submitted_by=self._current_username(),
             )
             required = {"Application ID": loan.application_id, "Applicant name": loan.applicant_name, "Date of birth": loan.date_of_birth, "Email": loan.email, "Phone": loan.phone, "Residential address": loan.residential_address, "Employment type": loan.employment_type, "Monthly income": loan.monthly_income, "Requested amount": loan.requested_amount, "Tenure": loan.tenure_months, "Loan purpose": loan.loan_purpose}
             missing = [name for name, value in required.items() if not value]
             if missing:
                 raise ValueError(f"Complete the required fields: {', '.join(missing)}.")
+            loan.document_evidence = self._save_uploaded_documents(application_id, files)
             policy_config = PolicyConfig()
-            bureau_database = LocalCreditBureauDatabase(Path.cwd() / "data" / "credit_bureau.sqlite3")
+            bureau_database = LocalCreditBureauDatabase(repo.state_path.parent / "credit_bureau.sqlite3")
             bureau_agent = CreditBureauDecisionAgent(repo, audit, policy_config, LocalCreditBureauProvider(bureau_database, policy_config))
             output = LoanOriginationService(repo, loan_agent, bureau_agent).submit(
                 loan,
-                field(values, "pan_for_bureau_lookup"),
-                field(values, "credit_bureau_consent") == "YES",
+                pan_for_bureau_lookup,
+                True,
             )
             return f"Loan request {output.application_id} created. {output.diagnosis}"
         if action == "customer_dormant_request":
             self._allow(role, "CUSTOMER")
+            require_agent_enabled("dormancy_agent")
             account = repo.get_account(field(values, "account_id"))
-            if account.customer_id != field(values, "customer_id"):
-                raise ValueError("The account and registered customer ID do not match.")
+            if not self._current_customer_id() or account.customer_id != self._current_customer_id():
+                raise ValueError("Account was not found.")
             if field(values, "kyc_confirmed") != "YES":
                 raise ValueError("Confirm KYC information before submitting a reactivation request.")
+            if account.status not in {
+                DormancyStatus.OUTREACH.value,
+                DormancyStatus.DORMANT.value,
+                DormancyStatus.TRANSFER_PENDING.value,
+            }:
+                raise ValueError("Only inactive or dormant accounts can be reactivated.")
             approval = repo.create_approval(Approval(
                 approval_id=f"APR-{len(repo.list_approvals()) + 1:04d}", kind="ACCOUNT_REACTIVATION", entity_id=account.account_id,
                 required_role="compliance.officer", package={"customer_id": account.customer_id, "current_status": account.status, "request": "Customer requested dormant account reactivation"},
             ))
-            audit.write("customer", "dormancy.reactivation_requested", account.account_id, "PENDING", {"approval_id": approval.approval_id})
+            audit.write(self._current_username(), "dormancy.reactivation_requested", account.account_id, "PENDING", {"approval_id": approval.approval_id})
             return f"Reactivation request for {account.account_id} submitted. Compliance review is required before the account can be reactivated."
         if action == "loan_input":
             self._allow(role, "LOAN", "ADMIN")
+            require_agent_enabled("loan_exception_agent")
+            require_agent_enabled("document_verification_rules")
             evidence = self._evidence(field(values, "document_evidence"))
-            loan = LoanApplication(field(values, "application_id"), field(values, "exception_code"), loan_product=field(values, "loan_product") or "PERSONAL", requested_documents=self._list(field(values, "requested_documents")), documents=self._list(field(values, "documents")), document_evidence=evidence, declared_income=float(field(values, "declared_income") or 0), verified_income=float(field(values, "verified_income") or 0), relationship_manager=field(values, "relationship_manager"))
-            if not loan.application_id or not loan.exception_code:
+            application_id = field(values, "application_id")
+            exception_code = field(values, "exception_code")
+            if not application_id or not exception_code:
                 raise ValueError("Application ID and exception type are required.")
+            try:
+                loan = repo.get_loan(application_id)
+                loan.exception_code = exception_code
+                loan.loan_product = field(values, "loan_product") or loan.loan_product
+                loan.requested_documents = self._list(field(values, "requested_documents"))
+                loan.documents = self._list(field(values, "documents"))
+                loan.document_evidence = evidence
+                loan.declared_income = float(field(values, "declared_income") or 0)
+                loan.verified_income = float(field(values, "verified_income") or 0)
+                loan.relationship_manager = field(values, "relationship_manager") or loan.relationship_manager
+            except KeyError:
+                loan = LoanApplication(
+                    application_id,
+                    exception_code,
+                    loan_product=field(values, "loan_product") or "PERSONAL",
+                    requested_documents=self._list(field(values, "requested_documents")),
+                    documents=self._list(field(values, "documents")),
+                    document_evidence=evidence,
+                    declared_income=float(field(values, "declared_income") or 0),
+                    verified_income=float(field(values, "verified_income") or 0),
+                    relationship_manager=field(values, "relationship_manager"),
+                )
             repo.save_loan(loan)
             output = loan_agent.run(loan.application_id)
             return f"Loan workflow processed: {output.application_id} is {output.status}. {output.diagnosis}"
         if action == "credit_decision":
             self._allow(role, "CREDIT", "ADMIN")
-            return self._decision(repo, audit, field(values, "approval_id"), "credit.manager", field(values, "decision"), field(values, "note"))
+            require_agent_enabled("loan_exception_agent")
+            decision = field(values, "decision")
+            note = field(values, "note")
+            approval = self._decision(
+                repo,
+                audit,
+                field(values, "approval_id"),
+                "credit.manager",
+                decision,
+                note,
+                self._current_username(),
+            )
+            if approval.kind in {"CREDIT_SCORE_REVIEW", "CREDIT_BUREAU_UNAVAILABLE"}:
+                policy_config = PolicyConfig()
+                bureau_database = LocalCreditBureauDatabase(repo.state_path.parent / "credit_bureau.sqlite3")
+                bureau_agent = CreditBureauDecisionAgent(repo, audit, policy_config, LocalCreditBureauProvider(bureau_database, policy_config))
+                LoanOriginationService(repo, loan_agent, bureau_agent).continue_after_credit_review(
+                    approval.entity_id,
+                    decision == "APPROVED",
+                    note or "Credit Manager declined continuation.",
+                )
+            elif approval.kind == "CREDIT_RECONSIDERATION":
+                policy_config = PolicyConfig()
+                bureau_database = LocalCreditBureauDatabase(repo.state_path.parent / "credit_bureau.sqlite3")
+                bureau_agent = CreditBureauDecisionAgent(repo, audit, policy_config, LocalCreditBureauProvider(bureau_database, policy_config))
+                LoanOriginationService(repo, loan_agent, bureau_agent).continue_after_credit_review(
+                    approval.entity_id,
+                    decision == "APPROVED",
+                    note or "Credit Manager declined reconsideration.",
+                    approved_decision="LOW_SCORE_RECONSIDERATION_APPROVED",
+                    rejected_decision="LOW_SCORE_RECONSIDERATION_REJECTED",
+                )
+            elif approval.kind == "LOAN_DEVIATION":
+                if decision == "APPROVED":
+                    loan_agent.apply_approved_deviation(approval.entity_id)
+                else:
+                    loan_agent.reject_application(approval.entity_id, note)
+            return f"{approval.approval_id} marked {decision}. The loan workflow was updated."
         if action == "loan_review_action":
             # Feature: dashboard approve/reject/reopen controls for loan applications.
             # Database connection: updates both the loan status and audit trail.
-            self._allow(role, "LOAN", "CREDIT", "COMPLIANCE", "ADMIN")
+            self._allow(role, "LOAN", "ADMIN")
             application_id = field(values, "application_id")
             action = field(values, "review_action")
             if action == "APPROVE":
@@ -168,18 +300,58 @@ class BankingAppHandler(BaseHTTPRequestHandler):
             raise ValueError("Unsupported review action")
         if action == "account_input":
             self._allow(role, "COMPLIANCE", "ADMIN")
-            account = Account(field(values, "account_id"), field(values, "customer_id"), field(values, "jurisdiction"), float(field(values, "balance") or 0), field(values, "last_customer_activity"))
+            require_agent_enabled("dormancy_agent")
+            jurisdiction = field(values, "jurisdiction")
+            last_customer_activity = date.fromisoformat(field(values, "last_customer_activity"))
+            as_of = date.fromisoformat(field(values, "as_of_date"))
+            account = Account(field(values, "account_id"), field(values, "customer_id"), jurisdiction, float(field(values, "balance") or 0), last_customer_activity.isoformat())
             if not account.account_id or not account.customer_id or not account.jurisdiction:
                 raise ValueError("Account ID, customer ID, and jurisdiction are required.")
+            if jurisdiction not in PolicyConfig().dormancy_days_by_jurisdiction:
+                raise ValueError("Jurisdiction is not configured in the active dormancy policy.")
+            if last_customer_activity > as_of:
+                raise ValueError("Last customer activity cannot be after the processing date.")
             repo.save_account(account)
-            output = next(item for item in dormancy_agent.run(date.fromisoformat(field(values, "as_of_date"))) if item.account_id == account.account_id)
+            output = next(item for item in dormancy_agent.run(as_of) if item.account_id == account.account_id)
             return f"Dormancy workflow processed: {output.account_id} is {output.status}."
         if action == "compliance_decision":
             self._allow(role, "COMPLIANCE", "ADMIN")
-            message = self._decision(repo, audit, field(values, "approval_id"), "compliance.officer", field(values, "decision"), field(values, "note"))
-            return message + (f" Executed {len(dormancy_agent.execute_approved_transfers())} approved transfer(s)." if field(values, "decision") == "APPROVED" else "")
+            require_agent_enabled("dormancy_agent")
+            decision = field(values, "decision")
+            approval = self._decision(
+                repo,
+                audit,
+                field(values, "approval_id"),
+                "compliance.officer",
+                decision,
+                field(values, "note"),
+                self._current_username(),
+            )
+            if approval.kind == "ACCOUNT_REACTIVATION" and decision == "APPROVED":
+                account = repo.get_account(approval.entity_id)
+                account.status = DormancyStatus.ACTIVE.value
+                account.outreach_sent = False
+                account.dormant_on = None
+                account.transfer_due_on = None
+                account.last_customer_activity = date.today().isoformat()
+                repo.save_account(account)
+                for pending in repo.list_approvals():
+                    if pending.entity_id == account.account_id and pending.kind == "UNCLAIMED_TRANSFER" and pending.status == "PENDING":
+                        pending.status = "REJECTED"
+                        pending.decision_by = self._current_username()
+                        pending.decision_note = "Cancelled because account reactivation was approved."
+                        repo.save_approval(pending)
+            elif approval.kind == "UNCLAIMED_TRANSFER" and decision == "REJECTED":
+                account = repo.get_account(approval.entity_id)
+                if account.status == DormancyStatus.TRANSFER_PENDING.value:
+                    account.status = DormancyStatus.DORMANT.value
+                    repo.save_account(account)
+            transfer_count = len(dormancy_agent.execute_approved_transfers()) if decision == "APPROVED" else 0
+            claim_count = len(dormancy_agent.execute_approved_claims()) if decision == "APPROVED" else 0
+            return f"{approval.approval_id} marked {decision}. Executed {transfer_count} transfer(s) and {claim_count} claim(s)."
         if action == "run_automation":
             self._allow(role, "LOAN", "COMPLIANCE", "ADMIN")
+            require_agent_enabled("operations_automation_agent")
             output = OperationsAutomationAgent(repo, audit, loan_agent, dormancy_agent).run_cycle(date.fromisoformat(field(values, "as_of_date")))
             return f"Automation completed: {len(output.actions)} action(s); {len(output.pending_human_actions)} pending approval(s)."
         raise ValueError("Unknown action.")
@@ -231,8 +403,16 @@ class BankingAppHandler(BaseHTTPRequestHandler):
             suffix = Path(filename).suffix.lower()
             if suffix not in {".pdf", ".png", ".jpg", ".jpeg"}:
                 raise ValueError(f"{document_type} must be a PDF, PNG, or JPG file.")
-            if len(payload) > 10 * 1024 * 1024:
-                raise ValueError(f"{document_type} exceeds the 10 MB file limit.")
+            if not payload or len(payload) > 10 * 1024 * 1024:
+                raise ValueError(f"{document_type} must be non-empty and no larger than 10 MB.")
+            signatures_match = {
+                ".pdf": payload.startswith(b"%PDF-"),
+                ".png": payload.startswith(b"\x89PNG\r\n\x1a\n"),
+                ".jpg": payload.startswith(b"\xff\xd8\xff"),
+                ".jpeg": payload.startswith(b"\xff\xd8\xff"),
+            }
+            if not signatures_match[suffix]:
+                raise ValueError(f"{document_type} content does not match its file extension.")
             target.mkdir(parents=True, exist_ok=True)
             (target / f"{document_type}{suffix}").write_bytes(payload)
             evidence[document_type] = "PENDING"
@@ -244,32 +424,59 @@ class BankingAppHandler(BaseHTTPRequestHandler):
             raise ValueError("Your role is not authorized for this action.")
 
     @staticmethod
-    def _decision(repo: LocalRepository, audit: AuditLog, approval_id: str, expected: str, decision: str, note: str) -> str:
+    def _decision(
+        repo: LocalRepository,
+        audit: AuditLog,
+        approval_id: str,
+        expected: str,
+        decision: str,
+        note: str,
+        actor: str,
+    ) -> Approval:
         approval = repo.get_approval(approval_id)
         if approval.required_role != expected:
             raise ValueError(f"Approval {approval_id} requires {approval.required_role}.")
+        if approval.status != "PENDING":
+            raise ValueError(f"Approval {approval_id} has already been decided.")
         if decision not in {"APPROVED", "REJECTED"}:
             raise ValueError("Choose Approved or Rejected.")
-        approval.status, approval.decision_by, approval.decision_note = decision, expected, note
-        repo.save_approval(approval); audit.write(expected, "approval.decided", approval.entity_id, decision, {"approval_id": approval_id})
-        return f"{approval_id} marked {decision}."
+        if decision == "REJECTED" and not note.strip():
+            raise ValueError("A decision note is required when rejecting an approval.")
+        approval.status, approval.decision_by, approval.decision_note = decision, actor, note
+        repo.save_approval(approval); audit.write(actor, "approval.decided", approval.entity_id, decision, {"approval_id": approval_id})
+        return approval
 
     def _session(self) -> tuple[str, str]:
         cookie = SimpleCookie(self.headers.get("Cookie")); item = cookie.get("banking_session")
         session = SESSIONS.get(item.value) if item else None
         return (session[0], session[1]) if session else ("", "")
 
+    def _session_token(self) -> str:
+        cookie = SimpleCookie(self.headers.get("Cookie"))
+        item = cookie.get("banking_session")
+        return item.value if item and item.value in SESSIONS else ""
+
     def _current_username(self) -> str:
         cookie = SimpleCookie(self.headers.get("Cookie")); item = cookie.get("banking_session")
         session = SESSIONS.get(item.value) if item else None
         return session[2] if session else ""
+
+    def _current_customer_id(self) -> str:
+        cookie = SimpleCookie(self.headers.get("Cookie")); item = cookie.get("banking_session")
+        session = SESSIONS.get(item.value) if item else None
+        return session[3] if session else ""
 
     def _login(self, username: str, password: str, user_type: str) -> None:
         authenticated = authenticate_local_user(Path.cwd() / "data", username, password, user_type)
         if not authenticated:
             self._login_page("Invalid username, password, or selected user type.")
             return
-        token = secrets.token_urlsafe(32); SESSIONS[token] = (authenticated.role, authenticated.display_name, authenticated.username)
+        token = secrets.token_urlsafe(32); SESSIONS[token] = (
+            authenticated.role,
+            authenticated.display_name,
+            authenticated.username,
+            authenticated.customer_id,
+        )
         self.send_response(303); self.send_header("Location", "/"); self.send_header("Set-Cookie", f"banking_session={token}; HttpOnly; SameSite=Lax; Path=/"); self.end_headers()
 
     def _signup(self, values: dict[str, list[str]]) -> None:
@@ -287,7 +494,9 @@ class BankingAppHandler(BaseHTTPRequestHandler):
 
     def _logout(self) -> None:
         cookie = SimpleCookie(self.headers.get("Cookie")); item = cookie.get("banking_session")
-        if item: SESSIONS.pop(item.value, None)
+        if item:
+            SESSIONS.pop(item.value, None)
+            CHAT_HISTORY.pop(item.value, None)
         self.send_response(303); self.send_header("Location", "/login"); self.send_header("Set-Cookie", "banking_session=; Max-Age=0; Path=/"); self.end_headers()
 
     def _redirect(self, target: str) -> None:
@@ -320,10 +529,16 @@ class BankingAppHandler(BaseHTTPRequestHandler):
         if not role:
             self._redirect("/login")
             return
+        if role not in {"CUSTOMER", "LOAN", "CREDIT", "ADMIN"}:
+            self._send("<html><body>Application not found.</body></html>")
+            return
         repo, _, loan_agent, _ = services()
         try:
             loan = repo.get_loan(application_id)
         except KeyError:
+            self._send("<html><body>Application not found.</body></html>")
+            return
+        if role == "CUSTOMER" and loan.submitted_by != self._current_username():
             self._send("<html><body>Application not found.</body></html>")
             return
         evidence_rows = "".join(f"<li><b>{html.escape(document)}</b>: {html.escape(status)}</li>" for document, status in sorted(loan.document_evidence.items())) or "<li>No document evidence recorded.</li>"
@@ -342,9 +557,71 @@ class BankingAppHandler(BaseHTTPRequestHandler):
         detail = detail.replace("</style>", "@media(max-width:680px){body{padding:12px}main{padding:18px;border-radius:14px}.grid{grid-template-columns:1fr}.card{padding:14px}}</style>")
         self._send(detail)
 
+    def _chat_panel(self, role: str) -> str:
+        history = CHAT_HISTORY.get(self._session_token(), [])
+        messages = history or [
+            (
+                "assistant",
+                "Hello. I can explain authorised loan, document, credit-bureau, approval, AI-agent, and dormant-account workflows.",
+            )
+        ]
+        message_rows = "".join(
+            f"<div class='chat-row chat-{html.escape(sender)}'><span>{'You' if sender == 'user' else 'Banking Assistant'}</span>"
+            f"<p>{html.escape(content)}</p></div>"
+            for sender, content in messages
+        )
+        suggestions = "".join(
+            "<form method='post' class='chat-suggestion'>"
+            "<input type='hidden' name='action' value='chat_message'>"
+            f"<button type='submit' name='message' value='{html.escape(prompt, quote=True)}'>{html.escape(prompt)}</button>"
+            "</form>"
+            for prompt in BankingSupportChatAgent.suggestions_for(role)[:4]
+        )
+        return (
+            "<style>.chat-card{border-color:#bfdbfe;background:linear-gradient(145deg,#fff,#f8fbff)}"
+            ".chat-transcript{display:grid;gap:10px;max-height:360px;overflow:auto;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px}"
+            ".chat-row{max-width:82%;padding:11px 13px;border-radius:15px}.chat-row span{display:block;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}"
+            ".chat-row p{margin:0;line-height:1.55}.chat-assistant{background:#dbeafe;color:#1e3a8a}.chat-user{justify-self:end;background:#0f172a;color:#fff}"
+            ".chat-suggestions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.chat-suggestion{display:block}.chat-suggestion button{width:auto;padding:8px 11px;background:#fff;color:#1d4ed8;border:1px solid #bfdbfe;box-shadow:none;font-size:.82rem}"
+            ".chat-compose{grid-template-columns:1fr auto;align-items:end}.chat-compose button{width:auto;min-width:130px}.chat-boundary{font-size:.82rem;color:#64748b;margin:10px 0 0}"
+            "@media(max-width:720px){.chat-row{max-width:95%}.chat-compose{grid-template-columns:1fr}.chat-compose button{width:100%}}</style>"
+            "<section class='card chat-card'><div class='card-head'><div><h2>Banking Support Assistant</h2>"
+            "<p>Role-aware workflow help using only information you are authorised to view.</p></div>"
+            "<span class='badge'>Read only</span></div>"
+            f"<div class='chat-transcript'>{message_rows}</div><div class='chat-suggestions'>{suggestions}</div>"
+            "<form method='post' class='chat-compose'><input type='hidden' name='action' value='chat_message'>"
+            "<label>Ask the assistant<input name='message' maxlength='1000' autocomplete='off' "
+            "placeholder='Ask about status, documents, approvals, CIBIL, or dormant accounts' required></label>"
+            "<button type='submit'>Send message</button></form>"
+            "<p class='chat-boundary'>The assistant cannot submit, approve, reject, verify KYC, change a score, disburse, or move money.</p>"
+            "</section>"
+        )
+
     def _dashboard(self, message: str, role: str, name: str) -> None:
         repo, _, loan_agent, dormancy_agent = services()
         approvals = "".join(f"<li>{html.escape(item.approval_id)} — {html.escape(item.kind)} — <b>{html.escape(item.status)}</b></li>" for item in repo.list_approvals()) or "<li>No approvals yet.</li>"
+        visible_approvals = repo.list_approvals()
+        if role == "CUSTOMER":
+            visible_approvals = []
+        elif role == "LOAN":
+            visible_approvals = [
+                item
+                for item in visible_approvals
+                if item.kind in {
+                    "LOAN_DEVIATION",
+                    "CREDIT_SCORE_REVIEW",
+                    "CREDIT_BUREAU_UNAVAILABLE",
+                    "CREDIT_RECONSIDERATION",
+                }
+            ]
+        elif role == "CREDIT":
+            visible_approvals = [item for item in visible_approvals if item.required_role == "credit.manager"]
+        elif role == "COMPLIANCE":
+            visible_approvals = [item for item in visible_approvals if item.required_role == "compliance.officer"]
+        approvals = "".join(
+            f"<li>{html.escape(item.approval_id)} - {html.escape(item.kind)} - <b>{html.escape(item.status)}</b></li>"
+            for item in visible_approvals
+        ) or "<li>No approvals yet.</li>"
         exception_cases = []
         if loan_agent.exception_db is not None:
             for item in loan_agent.exception_db.list_cases(limit=6):
@@ -368,7 +645,8 @@ class BankingAppHandler(BaseHTTPRequestHandler):
         all_accounts = repo.list_accounts()
         pending_approvals = [item for item in repo.list_approvals() if item.status == "PENDING"]
         if role == "CUSTOMER":
-            metrics = [("My loan requests", len([item for item in all_loans if item.relationship_manager == "customer-self-service"])), ("Documents pending", len([item for item in all_loans if item.relationship_manager == "customer-self-service" and item.status == LoanStatus.AWAITING_CUSTOMER.value])), ("On main journey", len([item for item in all_loans if item.relationship_manager == "customer-self-service" and item.status == LoanStatus.READY_FOR_MAIN_JOURNEY.value]))]
+            customer_loans = [item for item in all_loans if item.submitted_by == self._current_username()]
+            metrics = [("My loan requests", len(customer_loans)), ("Documents pending", len([item for item in customer_loans if item.status == LoanStatus.AWAITING_CUSTOMER.value])), ("On main journey", len([item for item in customer_loans if item.status == LoanStatus.READY_FOR_MAIN_JOURNEY.value]))]
         elif role == "LOAN":
             metrics = [("Open exceptions", len([item for item in all_loans if item.status in {LoanStatus.HELD.value, LoanStatus.AWAITING_CUSTOMER.value}])), ("Credit decisions", len([item for item in pending_approvals if item.required_role == "credit.manager"])), ("Main journey", len([item for item in all_loans if item.status == LoanStatus.READY_FOR_MAIN_JOURNEY.value]))]
         elif role == "CREDIT":
@@ -383,6 +661,7 @@ class BankingAppHandler(BaseHTTPRequestHandler):
             for label, count in metrics
         )
         sections.append(f"<section class='card'><div class='metric-grid'>{metric_html}</div></section>")
+        sections.append(self._chat_panel(role))
         pending_rows = []
         review_rows = []
         for loan in all_loans:
@@ -402,10 +681,17 @@ class BankingAppHandler(BaseHTTPRequestHandler):
         review_table = f"<table class='table'><thead><tr><th>Application</th><th>Customer</th><th>Status</th><th>AI diagnosis</th><th>Action</th></tr></thead><tbody>{''.join(review_rows)}</tbody></table>"
         pending_table = f"<table class='table'><thead><tr><th>Application</th><th>Customer</th><th>Status</th><th>AI diagnosis</th><th>View</th></tr></thead><tbody>{''.join(pending_rows)}</tbody></table>"
         if role == "CUSTOMER":
-            customer_loans = [item for item in all_loans if item.relationship_manager == "customer-self-service"]
+            customer_loans = [item for item in all_loans if item.submitted_by == self._current_username()]
             customer_rows = "".join(f"<tr><td>{html.escape(item.application_id)}</td><td>{html.escape(item.loan_product)}</td><td>{html.escape(item.status)}</td><td>{html.escape(item.diagnosis or '-')}</td><td><a href='/loan/{html.escape(item.application_id)}' target='_blank'>Track</a></td></tr>" for item in customer_loans) or "<tr><td colspan='5'>No loan requests yet.</td></tr>"
             sections.append(f"<section class='card'><div class='card-head'><div><h2>My applications</h2><p>Track the AI progression, status, and next action for your requests.</p></div><span class='badge'>Customer</span></div><table class='table'><thead><tr><th>Application</th><th>Product</th><th>Status</th><th>Next step</th><th></th></tr></thead><tbody>{customer_rows}</tbody></table></section>")
             sections.append("""<section class='card'><div class='card-head'><div><h2>Dormant account service</h2><p>Request reactivation of an inactive or dormant account. KYC and Compliance review remain mandatory.</p></div><span class='badge'>Account service</span></div><form method='post'><input type='hidden' name='action' value='customer_dormant_request'><div class='grid'><label>Account ID<input name='account_id' placeholder='Account ID' required></label><label>Registered customer ID<input name='customer_id' placeholder='Customer ID' required></label><label>KYC confirmation<select name='kyc_confirmed' required><option value='' selected disabled>Select confirmation</option><option value='YES'>I confirm my KYC details are current</option><option value='NO'>KYC update required</option></select></label></div><button>Request account reactivation</button></form><p style='color:#64748b;margin-bottom:0'>For transferred/unclaimed balances, the request is retained in the audit trail and must be processed through the bank’s claim and compliance workflow.</p></section>""")
+            sections[-1] = sections[-1].replace(
+                "<label>Registered customer ID<input name='customer_id' placeholder='Customer ID' required></label>",
+                "",
+            ).replace(
+                "Request reactivation of an inactive or dormant account.",
+                "Request reactivation of one of your inactive or dormant accounts.",
+            )
             sections.append("""<section class='card'><div class='card-head'><div><h2>Loan application</h2><p>Complete your details and submit a new request.</p></div><span class='badge'>Customer</span></div><form method='post' enctype='multipart/form-data'><input type='hidden' name='action' value='customer_request'><div class='grid'><label>Full name<input name='applicant_name' placeholder='Full name' required></label><label>Date of birth<input name='date_of_birth' type='date' required></label><label>Email<input name='email' type='email' placeholder='Email address' required></label><label>Phone<input name='phone' placeholder='Phone number' required></label><label>Residential address<input name='residential_address' placeholder='Residential address' required></label><label>Loan product<select name='loan_product'><option>PERSONAL</option><option>HOME</option><option>BUSINESS</option></select></label><label>Requested amount<input name='requested_amount' type='number' min='1' step='0.01' placeholder='Requested loan amount' required></label><label>Tenure (months)<input name='tenure_months' type='number' min='1' placeholder='Tenure in months' required></label><label>Loan purpose<input name='loan_purpose' placeholder='Purpose of loan' required></label><label>Employment type<select name='employment_type'><option value='' selected disabled>Employment type</option><option>SALARIED</option><option>SELF_EMPLOYED</option><option>BUSINESS_OWNER</option></select></label><label>Employer/business<input name='employer_name' placeholder='Employer or business name'></label><label>Monthly income<input name='monthly_income' type='number' min='1' step='0.01' placeholder='Monthly income' required></label></div><div class='grid'><label>PAN<input name='upload_pan' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Aadhaar<input name='upload_aadhaar' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Address proof<input name='upload_address' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Bank statement<input name='upload_bank' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Income proof<input name='upload_income' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Property document<input name='upload_property' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Business registration<input name='upload_business' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Financial statement<input name='upload_financial' type='file' accept='.pdf,.png,.jpg,.jpeg'></label></div><button>Submit loan request</button></form></section>""")
             sections[-1] = sections[-1].replace(
                 "</div><div class='grid'><label>PAN",
@@ -423,7 +709,6 @@ class BankingAppHandler(BaseHTTPRequestHandler):
             sections.append(f"""<section class='card'><div class='card-head'><div><h2>Applications for credit review</h2><p>Applications routed for credit approval or rework.</p></div><span class='badge'>Credit queue</span></div>{pending_table}</section>""")
         if role in {"COMPLIANCE", "ADMIN"}:
             sections.append("""<section class='card'><div class='card-head'><div><h2>Dormant account lifecycle</h2><p>Manage account review, transfer approvals, and compliance actions.</p></div><span class='badge'>Compliance</span></div><form method='post'><input type='hidden' name='action' value='account_input'><div class='grid'><label>Account ID<input name='account_id' placeholder='Account ID' required></label><label>Customer ID<input name='customer_id' placeholder='Customer ID' required></label><label>Jurisdiction<input name='jurisdiction' value='IN-RBI-DEA' required></label><label>Balance<input name='balance' type='number' min='0' step='0.01' placeholder='Balance' required></label><label>Last activity<input name='last_customer_activity' type='date' required></label><label>As of<input name='as_of_date' type='date' required></label></div><button>Run lifecycle</button></form><form method='post' class='stacked'><input type='hidden' name='action' value='compliance_decision'><div class='grid'><label>Approval ID<input name='approval_id' placeholder='Approval ID' required></label><label>Decision<select name='decision'><option>APPROVED</option><option>REJECTED</option></select></label><label>Decision note<input name='note' placeholder='Decision note'></label></div><button>Submit compliance decision</button></form></section>""")
-            sections.append(f"""<section class='card'><div class='card-head'><div><h2>Applications for compliance review</h2><p>Loan cases that need document review or reopen handling.</p></div><span class='badge'>Compliance queue</span></div>{review_table}</section>""")
             sections.append(f"""<section class='card'><div class='card-head'><div><h2>Dormant-account case register</h2><p>Latest persisted dormant-account and escheatment cases.</p></div><span class='badge'>Case register</span></div>{dormancy_table}</section>""")
         if role == "ADMIN":
             training_database = ModelTrainingDatabase(Path.cwd() / "data" / "model_training.sqlite3")
@@ -448,6 +733,42 @@ class BankingAppHandler(BaseHTTPRequestHandler):
                 "<table class='table'><thead><tr><th>Component</th><th>Type</th><th>Positive / negative</th>"
                 "<th>Human / synthetic</th><th>Status</th><th>Evaluation scope</th></tr></thead><tbody>"
                 + "".join(model_rows)
+                + "</tbody></table></section>"
+            )
+            chatbot_status = LocalChatbotTrainingDatabase(
+                Path.cwd() / "data" / "chatbot_training.sqlite3"
+            ).status_report()
+            chatbot_run = chatbot_status["latest_run"]
+            chatbot_summary = (
+                f"{chatbot_status['sample_count']} curated local examples; "
+                f"{chatbot_run['status'].lower() if chatbot_run else 'not trained'}"
+            )
+            setting_rows = []
+            for setting in AgentSettingsStore(Path.cwd() / "data" / "agent_settings.json").list_settings():
+                enabled = bool(setting["enabled"])
+                status_label = "Enabled" if enabled else "Disabled"
+                target = "NO" if enabled else "YES"
+                action_label = "Disable" if enabled else "Enable"
+                setting_rows.append(
+                    "<tr>"
+                    f"<td><b>{html.escape(setting['display_name'])}</b><br><small>{html.escape(setting['component_type'])}</small></td>"
+                    f"<td><span class='agent-status {'agent-enabled' if enabled else 'agent-disabled'}'>{status_label}</span></td>"
+                    f"<td>{html.escape(setting['risk_tier'])}</td>"
+                    f"<td><small>{html.escape(setting['authority_boundary'])}</small></td>"
+                    "<td><form method='post' class='inline-form'>"
+                    "<input type='hidden' name='action' value='agent_setting'>"
+                    f"<input type='hidden' name='model_key' value='{html.escape(setting['model_key'], quote=True)}'>"
+                    f"<input type='hidden' name='enabled' value='{target}'>"
+                    f"<button type='submit' class='{'button-disable' if enabled else 'button-enable'}'>{action_label}</button>"
+                    "</form></td></tr>"
+                )
+            sections.append(
+                "<section class='card'><div class='card-head'><div><h2>AI agent controls</h2>"
+                "<p>Enable or disable each component. Disabling a workflow component fails its dependent operation closed; it never bypasses a control.</p>"
+                f"<p class='chatbot-training'>Chatbot training: {html.escape(chatbot_summary)}. Live chat text is not retained for training.</p>"
+                "</div><span class='badge'>Administrator</span></div>"
+                "<table class='table'><thead><tr><th>Agent</th><th>Status</th><th>Risk</th><th>Authority boundary</th><th>Control</th></tr></thead><tbody>"
+                + "".join(setting_rows)
                 + "</tbody></table></section>"
             )
         if role in {"LOAN", "COMPLIANCE", "ADMIN"}:

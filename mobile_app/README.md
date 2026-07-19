@@ -1,56 +1,98 @@
-# Welcome to your Expo app 👋
+# Banking Operations AI Mobile
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+An Expo SDK 57 client for the Banking Operations AI platform. One codebase runs on Android, iOS, tablets, and the web while the FastAPI service remains the system of record.
 
-## Get started
+The app supports five role-scoped workspaces:
 
-1. Install dependencies
+- Customer: register, apply for a loan, explicitly consent to a credit-bureau enquiry, upload each document type, track AI progression, view dormant accounts, and request reactivation.
+- Loan Operations: review applications, inspect evidence and AI progression, upload supporting evidence, and run the exception agent.
+- Credit Manager: review credit-deviation approvals and record an accountable decision.
+- Compliance: manage dormant-account and transfer approvals.
+- Administrator: view all operational queues and the governed AI model registry.
 
-   ```bash
-   npm install
-   ```
+The customer never enters a CIBIL/credit score. The mobile app sends PAN plus recorded consent to the API; the configured provider retrieves the result, and the backend policy agent decides whether the case continues, needs human review, or is declined. Application IDs are generated only by the backend repository.
 
-2. Start the app
+## Prerequisites
 
-   ```bash
-   npx expo start
-   ```
+- Node.js 22.13 or newer (the minimum for Expo SDK 57)
+- The repository Python virtual environment and FastAPI dependencies
+- Android Studio/emulator or an Android device for Android testing
+- macOS with Xcode for a local iOS Simulator; on Windows, use a physical iPhone with Expo Go or an EAS cloud build
 
-In the output, you'll find options to open the app in a
+## Start the API
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+From the repository root in PowerShell:
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn banking_agents.api_app:app --host 0.0.0.0 --port 8001
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+The API exposes health at `http://127.0.0.1:8001/api/v1/health` and interactive documentation at `http://127.0.0.1:8001/docs`.
 
-### Other setup steps
+## Configure the client
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+For Android Emulator, no `.env` file is needed: the app defaults to `http://10.0.2.2:8001`. iOS Simulator and web default to `http://127.0.0.1:8001`.
 
-## Learn more
+For a physical device, copy `.env.example` to `.env` and replace the example with the computer's LAN address:
 
-To learn more about developing your project with Expo, look at the following resources:
+```powershell
+Copy-Item .env.example .env
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+The phone and computer must be on the same trusted network. The local firewall must allow port 8001. Do not expose this demonstration API to the public internet.
 
-## Join the community
+## Install and run
 
-Join our community of developers creating universal apps.
+```powershell
+cd mobile_app
+npm install
+npx expo start
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Then press `a` for Android, `i` for iOS on macOS, `w` for web, or scan the Expo Go QR code on a physical device.
+
+Direct scripts are also available:
+
+```powershell
+npm run android
+npm run ios
+npm run web
+```
+
+Expo Go development does not require an Expo account. When signed Android/iOS artifacts are needed, `eas.json` provides internal development/preview profiles and a store-ready production profile:
+
+```powershell
+npx eas-cli build --platform all --profile preview
+npx eas-cli build --platform all --profile production
+```
+
+EAS cloud builds require an Expo account and the appropriate Apple/Google signing setup.
+
+## Validation
+
+```powershell
+npm run typecheck
+npm run lint
+npm run doctor
+```
+
+## Architecture
+
+```text
+src/app/                 Expo Router screens
+src/components/          Responsive design system and authenticated shell
+src/context/auth.tsx     Session lifecycle and role identity
+src/lib/api.ts           Typed API envelope/error handling and platform URL
+src/lib/storage.ts       SecureStore on Android/iOS; browser storage fallback
+src/lib/types.ts         Shared client-side API data contracts
+```
+
+Authentication tokens use encrypted SecureStore on Android and iOS. Browser storage is an explicit development fallback and does not offer equivalent protection. DocumentPicker opens only after a user action, copies a native file to cache for immediate upload, and sends multipart data without persisting document contents in client state.
+
+## Current demonstration boundaries
+
+- Authentication tokens live in API memory and are invalidated when the API restarts.
+- JSON/SQLite persistence and local bureau fixtures are for development, not production banking.
+- Production needs the bank identity provider with MFA, PostgreSQL, object storage, malware scanning, TLS, certificate controls, mobile attestation, and approved bureau/KYC integrations.
+- Synthetic training metrics are not evidence of production accuracy. The admin registry makes dataset provenance and lifecycle state visible.
+- iOS binaries cannot be compiled locally on Windows; use macOS/Xcode or EAS Build.

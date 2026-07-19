@@ -186,6 +186,5 @@ Do not quote synthetic test metrics as expected production accuracy.
 `tests/test_local_model_training.py` verifies catalog classification, PII-name rejection, the fail-closed human-label gate, synthetic training/advisory inference, no source-state mutation, and rejection of a tampered artifact.
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests.test_local_model_training -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_local_model_training.py -v
 ```
-

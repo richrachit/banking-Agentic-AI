@@ -15,7 +15,7 @@ The repository combines a responsive multi-persona browser app, a versioned Fast
 | --- | --- | --- |
 | Customer loan application | Server-generated application ID, applicant/financial fields, product document metadata, separate uploads | LOS/customer master integration, field validation, privacy/retention controls |
 | Credit-bureau step | Explicit-consent gate plus fictional local CIBIL-style fixture provider | Authorised bureau membership/API, consent evidence, idempotency, reconciliation |
-| Score routing | `<650` local demo rejection, `650–749` Credit Manager review, `>=750` continues workflow, no-history review | Bank-approved/versioned policy; explainability, review and dispute path |
+| Score routing | `<650` local demo rejection with reconsideration, `650–749`/no-history/unavailable Credit Manager review, `>=750` continues workflow | Bank-approved/versioned policy; explainability, review and dispute path |
 | Loan exception agent | Missing-document diagnosis, transient retry, income-variance resolution/approval package | LOS, DMS/OCR, KYC, fraud, affordability and notification adapters |
 | Document review | Product requirement rules, upload status, baseline provider, optional Qwen visual triage | Malware scan, authenticity/fraud models, issuer verification, human QA |
 | KYC orchestration | Consent/format/risk/prerequisite checks in `IndiaKycAIAgent` | Approved PAN/Aadhaar/OVD/CKYCR/V-CIP/sanctions integrations |
@@ -40,6 +40,7 @@ Customer submits application and explicit bureau consent
   -> Credit Bureau Agent fetches authorised/local-fixture signal
        low demo band -> explainable rejection + review/dispute wording
        intermediate/no history -> Credit Manager approval queue
+       provider unavailable -> Credit Manager retrieval/retry queue (not rejection)
        high band -> continue (not an approval)
   -> document/data validation and exception diagnosis
        missing/invalid evidence -> customer request
@@ -50,6 +51,8 @@ Customer submits application and explicit bureau consent
 ```
 
 The score band does not approve a loan. It is one input before document, KYC, affordability, fraud, policy, and human-authority controls. The configured cutoffs are illustrative bank policy, not CIBIL or RBI thresholds. CIBIL describes a 300–900 score range and higher scores as lower credit risk; see the [CIBIL score FAQ](https://www.cibil.com/faq/understand-your-credit-score-and-report). RBI's [Digital Lending Directions, 2025](https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12848&Mode=0) require need-based data collection with prior explicit consent and an audit trail, among other controls.
+
+A customer can request Credit Manager reconsideration of a local low-score rejection. Approved intermediate/no-history/unavailable or reconsideration cases resume document/exception checks; Loan Operations cannot bypass the required credit decision.
 
 ## End-to-end dormant-account flow
 
@@ -99,6 +102,7 @@ Important modules:
 ## Requirements
 
 - Python 3.11 or newer.
+- Node.js 22.13 or newer for the Expo SDK 57 mobile client.
 - PowerShell examples below assume Windows.
 - Docker Desktop is optional and used only to inspect the PostgreSQL target schema.
 - The browser/CLI workflow uses the Python standard library. FastAPI, training, PostgreSQL, and Qwen capabilities have separate requirements files.
@@ -138,6 +142,20 @@ In another terminal:
 Open `http://127.0.0.1:8001/docs`. See [docs/API.md](docs/API.md) for endpoint roles, payloads, response/error envelopes, CIBIL-style routing, and production gaps.
 
 For an Android emulator, a client commonly reaches the host as `10.0.2.2`; a physical device needs the development computer's LAN address and an intentionally exposed/listening API. Do not expose this unauthenticated-development topology to an untrusted network.
+
+### Android and iOS application
+
+`mobile_app/` is a separate Expo SDK 57/React Native project that consumes the same role-secured API on Android, iOS, tablets, and the web. Start the API on an address reachable by the selected device, then run:
+
+```powershell
+cd mobile_app
+npm install
+npx expo start
+```
+
+The Android emulator defaults to `http://10.0.2.2:8001`; iOS Simulator and web default to `http://127.0.0.1:8001`. For a physical device, copy `mobile_app/.env.example` to `.env`, set `EXPO_PUBLIC_API_URL` to the development computer's LAN address, and start FastAPI with `--host 0.0.0.0` on a trusted network.
+
+Press `a` for Android, `i` for iOS on macOS, `w` for web, or scan the Expo Go QR code. Windows cannot build/run the local iOS Simulator; use a physical iPhone with Expo Go, a macOS/Xcode machine, or EAS cloud builds. Full setup, validation, secure-storage, and build instructions are in [mobile_app/README.md](mobile_app/README.md).
 
 ## Run the command-line workflows
 
@@ -220,6 +238,8 @@ Run tests as a module from the project root. Directly running `python tests\test
 ## Documentation
 
 - [API reference](docs/API.md)
+- [OpenAPI 3.1 snapshot](docs/openapi.json)
+- [Android/iOS app setup](mobile_app/README.md)
 - [Workflow reference](docs/WORKFLOWS.md)
 - [Architecture and coding standards](docs/ARCHITECTURE.md)
 - [AI agent technical reference](docs/AI_AGENTS_TECHNICAL.md)
@@ -236,4 +256,3 @@ Run tests as a module from the project root. Directly running `python tests\test
 - Idempotent, reconciled LOS/core/payment/regulatory integrations with retry, timeout, dead-letter, and human fallback.
 - Explainable adverse decisions plus authorised reconsideration, data-correction, complaint, and dispute handling.
 - No autonomous disbursement, unclaimed-balance transfer, customer claim payment, KYC verification, or regulatory sign-off.
-

@@ -4,6 +4,7 @@ import type { PropsWithChildren, ReactNode } from 'react';
 import {
   ActivityIndicator,
   KeyboardTypeOptions,
+  Modal,
   Pressable,
   StyleProp,
   StyleSheet,
@@ -114,11 +115,13 @@ export function ChoiceChips<T extends string>({
   options,
   value,
   onChange,
+  error,
 }: {
   label: string;
   options: { value: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
+  error?: string;
 }) {
   return (
     <View style={styles.fieldWrap}>
@@ -138,6 +141,7 @@ export function ChoiceChips<T extends string>({
           );
         })}
       </View>
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
   );
 }
@@ -188,6 +192,40 @@ export function Banner({ title, body, tone = 'info' }: { title?: string; body: s
       {title ? <Text style={styles.bannerTitle}>{title}</Text> : null}
       <Text style={styles.bannerBody}>{body}</Text>
     </View>
+  );
+}
+
+/** A styled, accessible summary used when a form cannot be submitted. */
+export function FormErrorModal({
+  visible,
+  title = 'Complete the required fields',
+  items,
+  onClose,
+}: {
+  visible: boolean;
+  title?: string;
+  items: string[];
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      transparent
+      animationType="fade"
+      visible={visible}
+      onRequestClose={onClose}
+      statusBarTranslucent>
+      <View style={styles.modalBackdrop}>
+        <View accessibilityViewIsModal style={styles.modalCard}>
+          <View style={styles.modalIcon}><Text style={styles.modalIconText}>!</Text></View>
+          <Text style={styles.modalTitle}>{title}</Text>
+          <Text style={styles.modalBody}>Review the highlighted fields before you continue.</Text>
+          <View style={styles.modalList}>
+            {items.map((item) => <Text key={item} style={styles.modalItem}>• {item}</Text>)}
+          </View>
+          <Button label="Review fields" onPress={onClose} style={styles.modalButton} />
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -275,10 +313,18 @@ const styles = StyleSheet.create({
   bannerSuccess: { backgroundColor: colors.primarySoft, borderLeftColor: colors.success },
   bannerTitle: { color: colors.ink, fontWeight: '900', fontSize: 14 },
   bannerBody: { color: colors.ink, fontSize: 13, lineHeight: 19 },
+  modalBackdrop: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.lg, backgroundColor: 'rgba(7, 28, 44, 0.54)' },
+  modalCard: { width: '100%', maxWidth: 420, alignItems: 'center', gap: 11, padding: space.xl, borderRadius: radius.lg, backgroundColor: colors.surface, ...shadows.card },
+  modalIcon: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 23, backgroundColor: colors.dangerSoft },
+  modalIconText: { color: colors.danger, fontSize: 25, fontWeight: '900' },
+  modalTitle: { color: colors.ink, fontSize: 20, fontWeight: '900', textAlign: 'center' },
+  modalBody: { color: colors.muted, fontSize: 13, lineHeight: 19, textAlign: 'center' },
+  modalList: { alignSelf: 'stretch', gap: 6, padding: 12, borderRadius: radius.sm, backgroundColor: colors.canvas },
+  modalItem: { color: colors.ink, fontSize: 13, lineHeight: 19, fontWeight: '700' },
+  modalButton: { alignSelf: 'stretch', marginTop: 4 },
   loading: { minHeight: 240, alignItems: 'center', justifyContent: 'center', gap: 14 },
   empty: { alignItems: 'center', gap: 12, paddingVertical: 32 },
   emptyMark: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
   emptyMarkText: { color: colors.primary, fontWeight: '900', fontSize: 20 },
   emptyTitle: { color: colors.ink, fontSize: 18, fontWeight: '900', textAlign: 'center' },
 });
-

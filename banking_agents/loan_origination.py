@@ -27,6 +27,10 @@ class LoanOriginationService:
         consent_version: str = CreditBureauDecisionAgent.supported_consent_version,
     ) -> LoanApplication:
         """Persists, fetches the bureau signal, then enters the existing workflow."""
+        if not credit_bureau_consent:
+            raise ValueError("Explicit consent is required before obtaining credit information.")
+        if consent_version != self.credit_bureau_agent.supported_consent_version:
+            raise ValueError("The credit-bureau consent version is unsupported or expired.")
         self.repository.save_loan(loan)
         try:
             assessed = self.credit_bureau_agent.assess(
@@ -46,15 +50,17 @@ class LoanOriginationService:
         application_id: str,
         approved: bool,
         reason: str,
+        approved_decision: str = "HUMAN_REVIEW_APPROVED",
+        rejected_decision: str = "HUMAN_REVIEW_REJECTED",
     ) -> LoanApplication:
         """Resume document checks only after an authorised credit decision."""
         loan = self.repository.get_loan(application_id)
         if approved:
             loan.status = LoanStatus.HELD.value
-            loan.credit_score_decision = "HUMAN_REVIEW_APPROVED"
+            loan.credit_score_decision = approved_decision
             loan.diagnosis = "Credit Manager approved continuation to the loan checks."
             self.repository.save_loan(loan)
             return self.loan_agent.run(application_id)
-        loan.credit_score_decision = "HUMAN_REVIEW_REJECTED"
+        loan.credit_score_decision = rejected_decision
         self.repository.save_loan(loan)
         return self.loan_agent.reject_application(application_id, reason)

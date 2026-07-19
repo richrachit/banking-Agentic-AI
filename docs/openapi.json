@@ -5,11 +5,16 @@
         "additionalProperties": false,
         "properties": {
           "decision": {
+            "enum": [
+              "APPROVED",
+              "REJECTED"
+            ],
             "title": "Decision",
             "type": "string"
           },
           "note": {
             "default": "",
+            "maxLength": 1000,
             "title": "Note",
             "type": "string"
           }
@@ -24,6 +29,7 @@
         "additionalProperties": false,
         "properties": {
           "as_of_date": {
+            "format": "date",
             "title": "As Of Date",
             "type": "string"
           }
@@ -53,14 +59,39 @@
         "title": "Body_upload_document_api_v1_loan_applications__application_id__documents_post",
         "type": "object"
       },
+      "CreditReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "bureau_dispute_reference": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Bureau Dispute Reference",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 10,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "CreditReviewRequest",
+        "type": "object"
+      },
       "DormancyRunRequest": {
         "additionalProperties": false,
         "properties": {
           "account_id": {
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Account Id",
             "type": "string"
           },
           "as_of_date": {
+            "format": "date",
             "title": "As Of Date",
             "type": "string"
           },
@@ -70,15 +101,20 @@
             "type": "number"
           },
           "customer_id": {
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Customer Id",
             "type": "string"
           },
           "jurisdiction": {
             "default": "IN-RBI-DEA",
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Jurisdiction",
             "type": "string"
           },
           "last_customer_activity": {
+            "format": "date",
             "title": "Last Customer Activity",
             "type": "string"
           }
@@ -110,10 +146,13 @@
         "additionalProperties": false,
         "properties": {
           "applicant_name": {
+            "maxLength": 120,
+            "minLength": 1,
             "title": "Applicant Name",
             "type": "string"
           },
           "consent_version": {
+            "const": "CREDIT_BUREAU_CONSENT_V1",
             "default": "CREDIT_BUREAU_CONSENT_V1",
             "title": "Consent Version",
             "type": "string"
@@ -123,28 +162,45 @@
             "type": "boolean"
           },
           "date_of_birth": {
+            "format": "date",
             "title": "Date Of Birth",
             "type": "string"
           },
           "email": {
+            "maxLength": 254,
+            "minLength": 3,
+            "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
             "title": "Email",
             "type": "string"
           },
           "employer_name": {
             "default": "",
+            "maxLength": 160,
             "title": "Employer Name",
             "type": "string"
           },
           "employment_type": {
+            "enum": [
+              "SALARIED",
+              "SELF_EMPLOYED",
+              "BUSINESS_OWNER"
+            ],
             "title": "Employment Type",
             "type": "string"
           },
           "loan_product": {
             "default": "PERSONAL",
+            "enum": [
+              "PERSONAL",
+              "HOME",
+              "BUSINESS"
+            ],
             "title": "Loan Product",
             "type": "string"
           },
           "loan_purpose": {
+            "maxLength": 500,
+            "minLength": 1,
             "title": "Loan Purpose",
             "type": "string"
           },
@@ -154,10 +210,16 @@
             "type": "number"
           },
           "pan_for_bureau_lookup": {
+            "maxLength": 10,
+            "minLength": 10,
+            "pattern": "^[A-Za-z]{5}[0-9]{4}[A-Za-z]$",
             "title": "Pan For Bureau Lookup",
             "type": "string"
           },
           "phone": {
+            "maxLength": 20,
+            "minLength": 7,
+            "pattern": "^[0-9+() -]+$",
             "title": "Phone",
             "type": "string"
           },
@@ -167,6 +229,8 @@
             "type": "number"
           },
           "residential_address": {
+            "maxLength": 500,
+            "minLength": 1,
             "title": "Residential Address",
             "type": "string"
           },
@@ -179,6 +243,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 20,
             "title": "Uploaded Document Types",
             "type": "array"
           }
@@ -204,14 +269,25 @@
         "additionalProperties": false,
         "properties": {
           "password": {
+            "maxLength": 256,
+            "minLength": 1,
             "title": "Password",
             "type": "string"
           },
           "user_type": {
+            "enum": [
+              "CUSTOMER",
+              "LOAN",
+              "CREDIT",
+              "COMPLIANCE",
+              "ADMIN"
+            ],
             "title": "User Type",
             "type": "string"
           },
           "username": {
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Username",
             "type": "string"
           }
@@ -242,23 +318,38 @@
         "additionalProperties": false,
         "properties": {
           "display_name": {
+            "maxLength": 100,
+            "minLength": 1,
             "title": "Display Name",
             "type": "string"
           },
           "email": {
+            "maxLength": 254,
+            "minLength": 3,
+            "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
             "title": "Email",
             "type": "string"
           },
           "password": {
+            "maxLength": 256,
             "minLength": 10,
             "title": "Password",
             "type": "string"
           },
           "user_type": {
+            "enum": [
+              "CUSTOMER",
+              "LOAN",
+              "CREDIT",
+              "COMPLIANCE"
+            ],
             "title": "User Type",
             "type": "string"
           },
           "username": {
+            "maxLength": 64,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9._-]+$",
             "title": "Username",
             "type": "string"
           }
@@ -825,6 +916,61 @@
           }
         ],
         "summary": "Loan Detail",
+        "tags": [
+          "Loans"
+        ]
+      }
+    },
+    "/api/v1/loan-applications/{application_id}/credit-review-requests": {
+      "post": {
+        "operationId": "request_credit_review_api_v1_loan_applications__application_id__credit_review_requests_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "title": "Application Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreditReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Request Credit Review",
         "tags": [
           "Loans"
         ]

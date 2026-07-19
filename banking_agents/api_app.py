@@ -27,11 +27,13 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from .audit import AuditLog
+from .agent_settings import AgentSettingsStore
 from .auth_service import AuthenticatedUser, authenticate_local_user
 from .automation_agent import OperationsAutomationAgent
+from .chat_agent import BankingSupportChatAgent
+from .chatbot_training import LocalChatbotTrainingDatabase
 from .credit_bureau_agent import (
     CreditBureauDecisionAgent,
-    CreditScoreUnavailable,
     LocalCreditBureauDatabase,
     LocalCreditBureauProvider,
 )
@@ -39,7 +41,7 @@ from .dormancy_agent import DormancyAgent
 from .loan_agent import LoanExceptionAgent
 from .loan_origination import LoanOriginationService
 from .local_models import MODEL_COMPONENTS
-from .models import Account, DormancyStatus, LoanApplication, LoanStatus
+from .models import Account, DormancyStatus, LoanApplication
 from .policy import PolicyConfig
 from .progression import loan_progress
 from .repository import LocalRepository
@@ -78,15 +80,15 @@ class SignupRequest(StrictRequest):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
     password: str = Field(min_length=10, max_length=256)
     display_name: str = Field(min_length=1, max_length=100)
-    email: str = Field(min_length=3, max_length=254)
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     user_type: SignupRole
 
 
 class LoanCreateRequest(StrictRequest):
     applicant_name: str = Field(min_length=1, max_length=120)
     date_of_birth: date
-    email: str = Field(min_length=3, max_length=254)
-    phone: str = Field(min_length=7, max_length=20)
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    phone: str = Field(min_length=7, max_length=20, pattern=r"^[0-9+() -]+$")
     residential_address: str = Field(min_length=1, max_length=500)
     loan_product: Literal["PERSONAL", "HOME", "BUSINESS"] = "PERSONAL"
     requested_amount: float = Field(gt=0)
@@ -95,10 +97,14 @@ class LoanCreateRequest(StrictRequest):
     employment_type: Literal["SALARIED", "SELF_EMPLOYED", "BUSINESS_OWNER"]
     employer_name: str = Field(default="", max_length=160)
     monthly_income: float = Field(gt=0)
-    pan_for_bureau_lookup: str = Field(min_length=10, max_length=10)
+    pan_for_bureau_lookup: str = Field(
+        min_length=10,
+        max_length=10,
+        pattern=r"^[A-Za-z]{5}[0-9]{4}[A-Za-z]$",
+    )
     credit_bureau_consent: bool
-    consent_version: str = "CREDIT_BUREAU_CONSENT_V1"
-    uploaded_document_types: list[str] = Field(default_factory=list)
+    consent_version: Literal["CREDIT_BUREAU_CONSENT_V1"] = "CREDIT_BUREAU_CONSENT_V1"
+    uploaded_document_types: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ApprovalDecisionRequest(StrictRequest):
@@ -108,6 +114,11 @@ class ApprovalDecisionRequest(StrictRequest):
 
 class ReactivationRequest(StrictRequest):
     kyc_confirmed: bool
+
+
+class CreditReviewRequest(StrictRequest):
+    reason: str = Field(min_length=10, max_length=1000)
+    bureau_dispute_reference: str = Field(default="", max_length=100)
 
 
 class DormancyRunRequest(StrictRequest):
@@ -121,6 +132,14 @@ class DormancyRunRequest(StrictRequest):
 
 class AutomationRunRequest(StrictRequest):
     as_of_date: date
+
+
+class ChatMessageRequest(StrictRequest):
+    message: str = Field(min_length=1, max_length=1000)
+
+
+class AgentSettingRequest(StrictRequest):
+    enabled: bool
 
 
 class ApiRuntime:
@@ -143,6 +162,16 @@ class ApiRuntime:
         )
         origination = LoanOriginationService(repository, loan_agent, bureau_agent)
         return repository, audit, loan_agent, dormancy_agent, origination
+
+    def agent_settings(self) -> AgentSettingsStore:
+        return AgentSettingsStore(self.data_directory / "agent_settings.json")
+
+    def require_agent_enabled(self, model_key: str) -> None:
+        if not self.agent_settings().is_enabled(model_key):
+            raise HTTPException(
+                503,
+                "This AI agent is disabled by an Administrator. The dependent workflow is unavailable until it is re-enabled.",
+            )
 
 
 def create_app(data_directory: str | Path | None = None) -> FastAPI:
@@ -185,6 +214,8 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         )
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
+        if request.url.path.startswith("/api/v1/"):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @api.exception_handler(HTTPException)
@@ -261,7 +292,13 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
             return [
                 item
                 for item in items
-                if item.kind in {"LOAN_DEVIATION", "CREDIT_SCORE_REVIEW", "CREDIT_BUREAU_UNAVAILABLE"}
+                if item.kind
+                in {
+                    "LOAN_DEVIATION",
+                    "CREDIT_SCORE_REVIEW",
+                    "CREDIT_BUREAU_UNAVAILABLE",
+                    "CREDIT_RECONSIDERATION",
+                }
             ]
         return items
 
@@ -347,6 +384,9 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
     @api.post("/api/v1/loan-applications", tags=["Loans"])
     def create_loan(payload: LoanCreateRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
         allow(current, "CUSTOMER")
+        runtime.require_agent_enabled("credit_bureau_decision_agent")
+        runtime.require_agent_enabled("loan_exception_agent")
+        runtime.require_agent_enabled("document_verification_rules")
         if not payload.credit_bureau_consent:
             raise HTTPException(422, "Credit-bureau consent is required before submission.")
         repository, _, _, _, origination = runtime.services()
@@ -385,8 +425,6 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
                 payload.credit_bureau_consent,
                 payload.consent_version,
             )
-        except CreditScoreUnavailable as error:
-            raise HTTPException(422, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         return response(request, asdict(output), status=201)
@@ -409,6 +447,46 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
             {"application": asdict(loan), "progress": [asdict(item) for item in loan_progress(loan.status, loan.exception_code)]},
         )
 
+    @api.post(
+        "/api/v1/loan-applications/{application_id}/credit-review-requests",
+        tags=["Loans"],
+    )
+    def request_credit_review(
+        application_id: str,
+        payload: CreditReviewRequest,
+        request: Request,
+        current: AuthenticatedUser = Depends(identity),
+    ):
+        allow(current, "CUSTOMER")
+        repository, audit, _, _, _ = runtime.services()
+        loan = owned_loan(repository, application_id, current)
+        if loan.status != "REJECTED" or loan.credit_score_decision != "REJECTED_LOW_SCORE":
+            raise HTTPException(409, "Credit reconsideration is available only for a low-score rejection.")
+        from .models import Approval
+
+        approval = repository.create_approval(
+            Approval(
+                f"APR-{len(repository.list_approvals()) + 1:04d}",
+                "CREDIT_RECONSIDERATION",
+                loan.application_id,
+                "credit.manager",
+                {
+                    "customer_reason": payload.reason.strip(),
+                    "bureau_dispute_reference": payload.bureau_dispute_reference.strip(),
+                    "original_credit_decision": loan.credit_score_decision,
+                    "score_reference": loan.credit_score_reference,
+                },
+            )
+        )
+        audit.write(
+            current.username,
+            "credit_bureau.reconsideration_requested",
+            loan.application_id,
+            "PENDING",
+            {"approval_id": approval.approval_id},
+        )
+        return response(request, asdict(approval), status=201)
+
     @api.post("/api/v1/loan-applications/{application_id}/documents", tags=["Loans"])
     async def upload_document(
         application_id: str,
@@ -417,6 +495,7 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         file: UploadFile = File(...),
         current: AuthenticatedUser = Depends(identity),
     ):
+        runtime.require_agent_enabled("baseline_document_provider")
         repository, audit, _, _, _ = runtime.services()
         loan = owned_loan(repository, application_id, current)
         allow(current, "CUSTOMER", "LOAN", "ADMIN")
@@ -452,6 +531,8 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
     @api.post("/api/v1/loan-applications/{application_id}/run-exception-agent", tags=["Loans"])
     def run_exception(application_id: str, request: Request, current: AuthenticatedUser = Depends(identity)):
         allow(current, "LOAN", "ADMIN")
+        runtime.require_agent_enabled("loan_exception_agent")
+        runtime.require_agent_enabled("document_verification_rules")
         repository, _, loan_agent, _, _ = runtime.services()
         try:
             repository.get_loan(application_id)
@@ -475,7 +556,7 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         current: AuthenticatedUser = Depends(identity),
     ):
         allow(current, "CREDIT", "COMPLIANCE", "ADMIN")
-        repository, audit, _, dormancy_agent, _ = runtime.services()
+        repository, audit, loan_agent, dormancy_agent, origination = runtime.services()
         try:
             approval = repository.get_approval(approval_id)
         except KeyError as error:
@@ -485,6 +566,15 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
             raise HTTPException(403, f"This approval requires {approval.required_role}.")
         if approval.status != "PENDING":
             raise HTTPException(409, "Approval has already been decided.")
+        if approval.kind in {
+            "CREDIT_SCORE_REVIEW",
+            "CREDIT_BUREAU_UNAVAILABLE",
+            "CREDIT_RECONSIDERATION",
+            "LOAN_DEVIATION",
+        }:
+            runtime.require_agent_enabled("loan_exception_agent")
+        if approval.kind in {"ACCOUNT_REACTIVATION", "UNCLAIMED_TRANSFER", "CUSTOMER_RECLAIM"}:
+            runtime.require_agent_enabled("dormancy_agent")
         decision = payload.decision
         if decision == "REJECTED" and not payload.note.strip():
             raise HTTPException(422, "A decision note is required when rejecting an approval.")
@@ -500,6 +590,16 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
                     approval.entity_id,
                     decision == "APPROVED",
                     payload.note or "Credit Manager declined continuation.",
+                )
+            )
+        elif approval.kind == "CREDIT_RECONSIDERATION":
+            updated_entity = asdict(
+                origination.continue_after_credit_review(
+                    approval.entity_id,
+                    decision == "APPROVED",
+                    payload.note or "Credit Manager declined reconsideration.",
+                    approved_decision="LOW_SCORE_RECONSIDERATION_APPROVED",
+                    rejected_decision="LOW_SCORE_RECONSIDERATION_REJECTED",
                 )
             )
         elif approval.kind == "LOAN_DEVIATION":
@@ -564,6 +664,7 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         current: AuthenticatedUser = Depends(identity),
     ):
         allow(current, "CUSTOMER")
+        runtime.require_agent_enabled("dormancy_agent")
         repository, audit, _, _, _ = runtime.services()
         try:
             account = repository.get_account(account_id)
@@ -596,6 +697,7 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
     @api.post("/api/v1/dormancy/cycles", tags=["Dormant accounts"])
     def run_dormancy(payload: DormancyRunRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
         allow(current, "COMPLIANCE", "ADMIN")
+        runtime.require_agent_enabled("dormancy_agent")
         repository, _, _, dormancy_agent, _ = runtime.services()
         if payload.jurisdiction not in PolicyConfig().dormancy_days_by_jurisdiction:
             raise HTTPException(422, "Jurisdiction is not configured in the active dormancy policy.")
@@ -615,9 +717,58 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
     @api.post("/api/v1/automation/cycles", tags=["Automation"])
     def run_automation(payload: AutomationRunRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
         allow(current, "LOAN", "COMPLIANCE", "ADMIN")
+        runtime.require_agent_enabled("operations_automation_agent")
         repository, audit, loan_agent, dormancy_agent, _ = runtime.services()
         result = OperationsAutomationAgent(repository, audit, loan_agent, dormancy_agent).run_cycle(payload.as_of_date)
         return response(request, asdict(result))
+
+    @api.post("/api/v1/chat/messages", tags=["Chat assistant"])
+    def chat_message(payload: ChatMessageRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
+        runtime.require_agent_enabled("banking_support_chatbot")
+        repository, audit, _, _, _ = runtime.services()
+        result = BankingSupportChatAgent(repository).respond(payload.message, current)
+        audit.write(
+            current.username,
+            "chat.assistant_responded",
+            f"CHAT-{current.role}",
+            result.intent,
+            {"source": result.source, "read_only": result.read_only},
+        )
+        return response(request, result.to_dict())
+
+    @api.get("/api/v1/ai/agents", tags=["AI governance"])
+    def agent_settings(request: Request, current: AuthenticatedUser = Depends(identity)):
+        allow(current, "ADMIN")
+        chatbot_training = LocalChatbotTrainingDatabase(data_path / "chatbot_training.sqlite3").status_report()
+        return response(
+            request,
+            {
+                "agents": runtime.agent_settings().list_settings(),
+                "chatbotTraining": chatbot_training,
+            },
+        )
+
+    @api.post("/api/v1/ai/agents/{model_key}/settings", tags=["AI governance"])
+    def update_agent_setting(
+        model_key: str,
+        payload: AgentSettingRequest,
+        request: Request,
+        current: AuthenticatedUser = Depends(identity),
+    ):
+        allow(current, "ADMIN")
+        try:
+            setting = runtime.agent_settings().set_enabled(model_key, payload.enabled, current.username)
+        except KeyError as error:
+            raise HTTPException(404, "AI agent was not found.") from error
+        _, audit, _, _, _ = runtime.services()
+        audit.write(
+            current.username,
+            "ai_agent.setting_changed",
+            model_key,
+            "ENABLED" if payload.enabled else "DISABLED",
+            {"fail_closed_when_disabled": setting["fail_closed_when_disabled"]},
+        )
+        return response(request, setting)
 
     @api.get("/api/v1/ai/models", tags=["AI governance"])
     def model_registry(request: Request, current: AuthenticatedUser = Depends(identity)):

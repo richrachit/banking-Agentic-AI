@@ -9,10 +9,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 const navigation: { label: string; href: string; roles: UserRole[] }[] = [
   { label: 'Dashboard', href: '/dashboard', roles: ['CUSTOMER', 'LOAN', 'CREDIT', 'COMPLIANCE', 'ADMIN'] },
-  { label: 'Loans', href: '/loans', roles: ['CUSTOMER', 'LOAN', 'CREDIT', 'COMPLIANCE', 'ADMIN'] },
+  { label: 'Assistant', href: '/chat', roles: ['CUSTOMER', 'LOAN', 'CREDIT', 'COMPLIANCE', 'ADMIN'] },
+  { label: 'Loans', href: '/loans', roles: ['CUSTOMER', 'LOAN', 'CREDIT', 'ADMIN'] },
   { label: 'New application', href: '/loans/new', roles: ['CUSTOMER'] },
   { label: 'Dormant accounts', href: '/accounts', roles: ['CUSTOMER', 'COMPLIANCE', 'ADMIN'] },
   { label: 'Approvals', href: '/approvals', roles: ['LOAN', 'CREDIT', 'COMPLIANCE', 'ADMIN'] },
+  { label: 'AI settings', href: '/agent-settings', roles: ['ADMIN'] },
   { label: 'AI registry', href: '/models', roles: ['ADMIN'] },
 ];
 
@@ -95,4 +97,3 @@ const styles = StyleSheet.create({
   content: { width: '100%', maxWidth: 1180, alignSelf: 'center', padding: space.lg, paddingBottom: 64, gap: space.lg },
   contentWide: { paddingHorizontal: space.xxl, paddingTop: space.xl },
 });
-

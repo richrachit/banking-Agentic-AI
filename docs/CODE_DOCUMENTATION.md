@@ -29,7 +29,8 @@ This is the code-level map for the current repository. The active runtime is a l
 
 - Defines `create_app(data_directory)` and the default FastAPI `app`.
 - Publishes versioned routes under `/api/v1` and documentation at `/docs`, `/redoc`, and `/openapi.json`.
-- Applies bearer-token authentication, role checks, customer ownership filters, response envelopes, request IDs, and problem JSON for application errors.
+- Applies bearer-token authentication, role checks, customer ownership filters, response envelopes, validated request IDs, `no-store` API responses, redacted problem JSON for application/validation errors, and an environment-configured CORS allowlist.
+- Exposes customer low-score reconsideration and applies authorised approval follow-on transitions for credit review, deviation, reactivation, transfer, and claims.
 - Instantiates services against the configured local data directory on each operation.
 - Keeps bearer tokens in process memory; there is no production session/token lifecycle.
 
@@ -47,9 +48,10 @@ See [API.md](API.md) for the endpoint matrix and payload behavior.
 `LoanOriginationService.submit()` is the shared customer-submission sequence:
 
 1. Persist the generated `LoanApplication`.
-2. Call `CreditBureauDecisionAgent.assess()` with PAN and explicit-consent flag.
+2. Call `CreditBureauDecisionAgent.assess()` with PAN, explicit-consent flag, and supported consent version.
 3. If the score branch leaves the loan `HELD`, invoke `LoanExceptionAgent.run()`.
-4. Otherwise return the rejection/review state without bypassing it.
+4. Route provider unavailability to Credit Manager review instead of rejection.
+5. `continue_after_credit_review()` resumes exception checks only after an authorised approval or records a rejection.
 
 ### `banking_agents/auth_service.py`
 
@@ -71,8 +73,8 @@ See [API.md](API.md) for the endpoint matrix and payload behavior.
 - Defines the `CreditBureauProvider` protocol and normalized `CreditScoreResult`.
 - `LocalCreditBureauDatabase` stores fictional fixtures and lookup history in SQLite.
 - Validates PAN format, derives an HMAC-SHA256 subject key, and avoids persisting raw PAN.
-- `LocalCreditBureauProvider` requires explicit consent and maps scores to `LOW`, `REVIEW`, `HIGH`, or `NO_HISTORY` using `PolicyConfig`.
-- `CreditBureauDecisionAgent` records score metadata on the loan and routes to local rejection, Credit Manager review, or continued workflow.
+- `LocalCreditBureauProvider` requires explicit consent and records version/purpose with the check while mapping scores to `LOW`, `REVIEW`, `HIGH`, or `NO_HISTORY` using `PolicyConfig`.
+- `CreditBureauDecisionAgent` records consent/score metadata and routes to local rejection, Credit Manager review, provider-unavailable review, or continued workflow.
 - Does not implement a real TransUnion CIBIL connection.
 
 ### `banking_agents/loan_agent.py`
@@ -81,7 +83,7 @@ See [API.md](API.md) for the endpoint matrix and payload behavior.
 - Requests exact customer evidence, retries permitted checks, resolves within tolerance, or creates a `LOAN_DEVIATION` approval.
 - Applies approved deviations and provides reviewed reject/reopen actions.
 - Writes repository state, audit events, and optional loan-exception case history.
-- Cannot disburse funds or override an undecided/rejected approval.
+- Cannot disburse funds; its direct approve action rejects attempts to bypass an awaiting/rejected bureau or Credit Manager decision.
 
 ### `banking_agents/document_verification.py`
 
@@ -134,7 +136,7 @@ See [API.md](API.md) for the endpoint matrix and payload behavior.
 
 Defines dataclasses and status enums:
 
-- `LoanApplication` includes application/financial/document fields, submitter ownership, diagnosis, and credit-score metadata.
+- `LoanApplication` includes application/financial/document fields, submitter ownership, diagnosis, bureau consent metadata, and credit-score routing metadata.
 - `Account` holds jurisdiction, balance, inactivity, transfer, and claim state.
 - `Approval` holds kind, target entity, required role, package, status, and decision evidence.
 - `LoanStatus` and `DormancyStatus` define the persisted state vocabulary.
@@ -220,4 +222,3 @@ See [MODEL_TRAINING.md](MODEL_TRAINING.md) for features, labels, commands, artif
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
-

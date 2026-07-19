@@ -92,13 +92,33 @@ export type Dashboard = {
   pendingActions: Approval[];
 };
 
+export type ChatAction = {
+  label: string;
+  path: string;
+};
+
+export type ChatAssistantResult = {
+  reply: string;
+  intent: string;
+  source: string;
+  suggested_prompts: string[];
+  actions: ChatAction[];
+  agent_name: string;
+  mode: string;
+  read_only: boolean;
+  authority_boundary: string;
+};
+
 export type ModelComponent = {
   model_key: string;
   display_name: string;
   component_type: string;
+  implementation: string;
   training_supported: boolean;
-  lifecycle_status: string;
-  decision_authority: string;
+  risk_tier: string;
+  positive_definition: string;
+  negative_definition: string;
+  authority_boundary: string;
   examples: {
     total: number;
     positive: number;
@@ -118,3 +138,36 @@ export type ModelRegistry = {
   components: ModelComponent[];
 };
 
+export type AgentSetting = {
+  model_key: string;
+  display_name: string;
+  component_type: string;
+  training_supported: boolean;
+  risk_tier: string;
+  authority_boundary: string;
+  enabled: boolean;
+  changed_by: string | null;
+  changed_at: string | null;
+  fail_closed_when_disabled: boolean;
+};
+
+export type ChatbotTrainingSummary = {
+  status?: string;
+  examples?: {
+    total?: number;
+    positive?: number;
+    negative?: number;
+    human_verified?: number;
+    synthetic?: number;
+  };
+  latest_run?: {
+    status?: string;
+    algorithm?: string;
+    metrics?: Record<string, number>;
+  } | null;
+};
+
+export type AgentSettingsResponse = {
+  agents: AgentSetting[];
+  chatbotTraining: ChatbotTrainingSummary;
+};

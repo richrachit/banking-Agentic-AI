@@ -7,3 +7,4 @@ data/credit_bureau.sqlite3
 data/credit_bureau.sqlite3-*
 data/models/
 data/uploads/
+data/*.log
