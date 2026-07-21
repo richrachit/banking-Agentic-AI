@@ -6,6 +6,7 @@ Only curated support phrases are stored here. Live user chat text is never
 written to this training store, audit record, or model artifact.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -80,8 +81,26 @@ class LocalChatbotTrainingDatabase:
         connection.row_factory = sqlite3.Row
         return connection
 
+    @contextmanager
+    def _connection(self):
+        """Yield a SQLite connection and always close it on Windows and Unix.
+
+        ``sqlite3.Connection`` is a transaction context manager but it does not
+        close itself when its ``with`` block ends. Explicit closure prevents
+        leaked file handles from blocking local database cleanup and backups.
+        """
+        connection = self._connect()
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS chatbot_training_example (
@@ -112,7 +131,7 @@ class LocalChatbotTrainingDatabase:
     def seed_curated_examples(self) -> int:
         count = 0
         now = self.now()
-        with self._connect() as connection:
+        with self._connection() as connection:
             for intent, phrases in DEFAULT_INTENT_EXAMPLES.items():
                 for index, phrase in enumerate(phrases, start=1):
                     key = f"curated:{intent}:{index}"
@@ -130,7 +149,7 @@ class LocalChatbotTrainingDatabase:
         return count
 
     def examples(self) -> list[sqlite3.Row]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             return connection.execute(
                 "SELECT example_key, utterance, intent FROM chatbot_training_example ORDER BY example_key"
             ).fetchall()
@@ -139,7 +158,7 @@ class LocalChatbotTrainingDatabase:
         counts: dict[str, int] = {}
         for item in examples:
             counts[item["intent"]] = counts.get(item["intent"], 0) + 1
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO chatbot_training_run(run_id, status, sample_count, intent_counts_json, started_at)
@@ -156,7 +175,7 @@ class LocalChatbotTrainingDatabase:
         artifact_sha256: str,
         versions: dict[str, str],
     ) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 UPDATE chatbot_training_run
@@ -175,14 +194,14 @@ class LocalChatbotTrainingDatabase:
             )
 
     def fail_run(self, run_id: str, error: Exception) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 "UPDATE chatbot_training_run SET status='FAILED', error_message=?, completed_at=? WHERE run_id=?",
                 (str(error)[:2000], self.now(), run_id),
             )
 
     def latest_successful_run(self) -> dict[str, Any] | None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 """
                 SELECT * FROM chatbot_training_run WHERE status='SUCCEEDED'
@@ -198,7 +217,7 @@ class LocalChatbotTrainingDatabase:
         return result
 
     def status_report(self) -> dict[str, Any]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             total = connection.execute("SELECT COUNT(*) FROM chatbot_training_example").fetchone()[0]
             intents = {
                 row["intent"]: row["count"]

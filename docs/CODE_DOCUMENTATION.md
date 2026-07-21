@@ -14,6 +14,8 @@ This is the code-level map for the current repository. The active runtime is a l
 | Model status | `python scripts/model_status.py` | Print component/data/run registry |
 | Advisory scoring | `python scripts/score_local_model.py --application-id ...` | Score without changing workflow state |
 | Bureau demo seeder | `python scripts/seed_credit_bureau_demo.py` | Create fictional local credit-score fixtures |
+| Chatbot trainer | `python scripts/train_chatbot.py` | Train the bounded support-intent classifier from curated local phrases |
+| Chatbot status | `python scripts/chatbot_status.py` | Print curated intent counts and latest chatbot training run |
 
 ## Application and interface modules
 
@@ -24,6 +26,8 @@ This is the code-level map for the current repository. The active runtime is a l
 - Uses `authenticate_local_user()` for the same local identity source as the API.
 - Submits customer loans through `LoanOriginationService`, ensuring the bureau branch is shared with the API.
 - Saves uploaded files under `data/uploads/`; production object storage/security is not implemented.
+- Provides the read-only Banking Support Assistant panel, session-only transcript, and Administrator AI-component controls.
+- Uses a visible validation modal to highlight missing required form fields before local form submission; server validation remains authoritative.
 
 ### `banking_agents/api_app.py`
 
@@ -31,6 +35,7 @@ This is the code-level map for the current repository. The active runtime is a l
 - Publishes versioned routes under `/api/v1` and documentation at `/docs`, `/redoc`, and `/openapi.json`.
 - Applies bearer-token authentication, role checks, customer ownership filters, response envelopes, validated request IDs, `no-store` API responses, redacted problem JSON for application/validation errors, and an environment-configured CORS allowlist.
 - Exposes customer low-score reconsideration and applies authorised approval follow-on transitions for credit review, deviation, reactivation, transfer, and claims.
+- Exposes `POST /chat/messages` for a role-scoped, read-only support assistant and Administrator-only `/ai/agents` controls that fail closed for protected dependencies.
 - Instantiates services against the configured local data directory on each operation.
 - Keeps bearer tokens in process memory; there is no production session/token lifecycle.
 
@@ -180,6 +185,26 @@ Defines dataclasses and status enums:
 
 See [MODEL_TRAINING.md](MODEL_TRAINING.md) for features, labels, commands, artifact risk, and validation requirements.
 
+### `banking_agents/chat_agent.py`
+
+- Implements bounded workflow support responses for browser and API clients.
+- Filters loans, accounts, and approvals before composing a response based on the authenticated role and entity ownership.
+- Refuses mutating requests and returns a documented action boundary instead of calling any workflow service.
+- Uses deterministic topic routing by default and can consume a verified local intent prediction without granting tool authority.
+
+### `banking_agents/chatbot_training.py`
+
+- Maintains a separate SQLite database for curated support examples and training-run metadata.
+- Trains TF-IDF plus balanced logistic regression, writes a hash-recorded joblib artifact, and verifies artifact path/hash/run/model metadata before inference.
+- Explicitly never writes live messages or replies into the store or artifact.
+- Closes each SQLite connection deterministically after the unit of work to avoid local Windows file-handle leaks.
+
+### `banking_agents/agent_settings.py`
+
+- Stores component availability state in `data/agent_settings.json` for the local demo.
+- Adds the support chatbot to the registered local component catalog.
+- Gives callers `is_enabled()` and `set_enabled()` and makes unknown component keys fail closed.
+
 ## Feature-to-module map
 
 | Feature | Main modules |
@@ -193,6 +218,8 @@ See [MODEL_TRAINING.md](MODEL_TRAINING.md) for features, labels, commands, artif
 | Credit/compliance approval | `loan_agent.py`, `dormancy_agent.py`, `repository.py`, interface modules |
 | Dormancy/transfer/claim workflow | `dormancy_agent.py`, `dormancy_escheatment_platform.py` |
 | Cross-workflow automation | `automation_agent.py` |
+| Read-only workflow support assistant | `chat_agent.py`, `chatbot_training.py`, interface modules |
+| AI availability controls | `agent_settings.py`, `api_app.py`, `web_app.py` |
 | Application progression | `progression.py`, interface modules |
 | Local model governance/training | `local_models.py`, `training_store.py`, `scripts/*model*.py` |
 | PostgreSQL target | `database/schema.sql`, `docker-compose.yml` |
@@ -208,6 +235,8 @@ See [MODEL_TRAINING.md](MODEL_TRAINING.md) for features, labels, commands, artif
 | Dormancy case/outreach | `state.json`, `dormancy_cases.sqlite3` | `dormant_account_case`, `outreach_attempt` |
 | Audit | `audit.jsonl` | `immutable_audit_event` plus WORM sink |
 | Model governance | `model_training.sqlite3`, `models/` | `ai_model_*`, `ai_training_*`, signed artifact registry |
+| Chatbot training | `chatbot_training.sqlite3`, `models/` | `chatbot_training_example`, `chatbot_training_run`; no live transcript |
+| AI availability change | `agent_settings.json`, `audit.jsonl` | `ai_agent_setting`, `immutable_audit_event` |
 
 ## Coding and test conventions
 

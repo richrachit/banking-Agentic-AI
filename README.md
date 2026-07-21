@@ -5,7 +5,7 @@ A local reference application for two expensive, exception-heavy banking operati
 1. **Loan-processing exception resolution.** Applications often stop because evidence is missing or inconsistent, verification fails, or a requested decision falls outside policy. The platform diagnoses the hold, requests specific evidence, retries permitted checks, routes deviations to the correct human authority, and returns resolved cases to the main loan journey.
 2. **Dormant accounts and unclaimed balances.** Outreach, inactivity clocks, classification, transfer preparation, compliance approval, and later customer claims are coordinated through a jurisdiction-aware, auditable workflow.
 
-The repository combines a responsive multi-persona browser app, a versioned FastAPI backend for web/mobile clients, command-line workflow tools, explainable deterministic agents, optional document AI, and a governed local advisory-model training pipeline.
+The repository combines a responsive multi-persona browser app, a versioned FastAPI backend, command-line workflow tools, explainable deterministic agents, optional document AI, and a governed local advisory-model training pipeline.
 
 > **Reference implementation only.** This code does not connect to TransUnion CIBIL, RBI/DEA filing, UIDAI, CKYCR, a loan origination system, core banking, payments, eSign, sanctions screening, or a production identity provider. It must not be used to make live credit, KYC, regulatory, or customer-money decisions without approved integrations, legal/compliance validation, model-risk governance, security controls, and maker-checker authorization.
 
@@ -108,7 +108,6 @@ Important modules:
 ## Requirements
 
 - Python 3.11 or newer.
-- Node.js 22.13 or newer for the Expo SDK 57 mobile client.
 - PowerShell examples below assume Windows.
 - Docker Desktop is optional and used only to inspect the PostgreSQL target schema.
 - The browser/CLI workflow uses the Python standard library. FastAPI, training, PostgreSQL, and Qwen capabilities have separate requirements files.
@@ -146,22 +145,6 @@ In another terminal:
 ```
 
 Open `http://127.0.0.1:8001/docs`. See [docs/API.md](docs/API.md) for endpoint roles, payloads, response/error envelopes, CIBIL-style routing, and production gaps.
-
-For an Android emulator, a client commonly reaches the host as `10.0.2.2`; a physical device needs the development computer's LAN address and an intentionally exposed/listening API. Do not expose this unauthenticated-development topology to an untrusted network.
-
-### Android and iOS application
-
-`mobile_app/` is a separate Expo SDK 57/React Native project that consumes the same role-secured API on Android, iOS, tablets, and the web. Start the API on an address reachable by the selected device, then run:
-
-```powershell
-cd mobile_app
-npm install
-npx expo start
-```
-
-The Android emulator defaults to `http://10.0.2.2:8001`; iOS Simulator and web default to `http://127.0.0.1:8001`. For a physical device, copy `mobile_app/.env.example` to `.env`, set `EXPO_PUBLIC_API_URL` to the development computer's LAN address, and start FastAPI with `--host 0.0.0.0` on a trusted network.
-
-Press `a` for Android, `i` for iOS on macOS, `w` for web, or scan the Expo Go QR code. Windows cannot build/run the local iOS Simulator; use a physical iPhone with Expo Go, a macOS/Xcode machine, or EAS cloud builds. Full setup, validation, secure-storage, and build instructions are in [mobile_app/README.md](mobile_app/README.md).
 
 ## Run the command-line workflows
 
@@ -211,9 +194,9 @@ The support assistant works with deterministic, role-scoped retrieval before a c
 .\.venv\Scripts\python.exe scripts\chatbot_status.py
 ```
 
-Only the curated phrases in `banking_agents/chatbot_training.py` are inserted into `data/chatbot_training.sqlite3`. Live browser/API/mobile messages are not stored in that training database, audit detail, or model artifact. The run's evaluation scope is explicitly `CURATED_LOCAL_DEMO_NOT_PRODUCTION_VALIDATION`; it is not a customer-data model or production-quality evaluation.
+Only the curated phrases in `banking_agents/chatbot_training.py` are inserted into `data/chatbot_training.sqlite3`. Live browser/API messages are not stored in that training database, audit detail, or model artifact. The run's evaluation scope is explicitly `CURATED_LOCAL_DEMO_NOT_PRODUCTION_VALIDATION`; it is not a customer-data model or production-quality evaluation.
 
-Administrators can inspect every component and enable/disable it in the browser dashboard or mobile **AI settings** page. Disabling a component makes dependent operations unavailable with a fail-closed response; it does not bypass the control. The API equivalents are documented in [docs/API.md](docs/API.md).
+Administrators can inspect every component and enable/disable it in the browser dashboard. Disabling a component makes dependent operations unavailable with a fail-closed response; it does not bypass the control. The API equivalents are documented in [docs/API.md](docs/API.md).
 
 ## Optional local document-vision provider
 
@@ -264,11 +247,11 @@ Run tests as a module from the project root. Directly running `python tests\test
 
 - [API reference](docs/API.md)
 - [OpenAPI 3.1 snapshot](docs/openapi.json)
-- [Android/iOS app setup](mobile_app/README.md)
 - [Workflow reference](docs/WORKFLOWS.md)
 - [Architecture and coding standards](docs/ARCHITECTURE.md)
 - [AI agent technical reference](docs/AI_AGENTS_TECHNICAL.md)
 - [Local model training and governance](docs/MODEL_TRAINING.md)
+- [Database design and local-data boundaries](docs/DATABASE.md)
 - [Code/module map](docs/CODE_DOCUMENTATION.md)
 - [Research notes](docs/RESEARCH.md)
 

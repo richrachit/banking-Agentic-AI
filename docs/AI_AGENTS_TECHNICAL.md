@@ -20,6 +20,8 @@ Browser UI / FastAPI / CLI
           |
           +-- OperationsAutomationAgent
           |
+          +-- BankingSupportChatAgent (read-only, role-scoped)
+          |
           +-- LocalRepository / AuditLog / case SQLite stores
           |
           +-- ModelTrainingDatabase / advisory model artifacts
@@ -41,6 +43,7 @@ The active web/API workflow is deterministic. Locally trained classifiers are ke
 | Operations Automation Agent | Deterministic supervisor | User/scheduler cycle | Delegated actions and pending human work | Cannot bypass specialist approval gates |
 | Loan Exception Advisory | Trained scikit-learn classifier | Explicit local runtime call/script | Positive/negative routing pattern probability | No workflow mutation |
 | Document Review Advisory | Trained scikit-learn classifier | Explicit local runtime call | Usable/review pattern probability | No authenticity/KYC/approval |
+| Banking Support Chatbot | Deterministic retrieval plus optional trained intent classifier | Authenticated browser/API support question | Role-scoped explanation, safe navigation hints, bounded intent | No workflow mutation, tool call, decision, or customer-money authority |
 
 The catalog persisted by `ModelTrainingDatabase` also includes the baseline document provider and product document rules as distinct governed components. See [MODEL_TRAINING.md](MODEL_TRAINING.md).
 
@@ -172,10 +175,12 @@ The runtime checks feature-schema equality, approved directory, artifact existen
 | `dormancy_cases.sqlite3` | Dormancy/outreach/filing case history |
 | `model_training.sqlite3` | Catalog, training examples/runs/predictions |
 | `models/*.joblib` | Local advisory artifacts |
+| `chatbot_training.sqlite3` | Curated support-intent examples and training-run metadata; never live messages |
+| `agent_settings.json` | Component enabled states and last Administrator change |
 
 ### PostgreSQL target
 
-`database/schema.sql` defines application/document, bureau consent/enquiry/decision, workflow/approval/audit, dormant-account/outreach, and model-governance records. The running agents do not use this schema yet. Production must implement transactional repositories, object/WORM storage, migration/version controls, row-level authorization, retention, backup/restore, and reconciliation.
+`database/schema.sql` defines application/document, bureau consent/enquiry/decision, workflow/approval/audit, dormant-account/outreach, model-governance, AI-availability, and chatbot-governance records. The running agents do not use this schema yet. Production must implement transactional repositories, object/WORM storage, migration/version controls, row-level authorization, retention, backup/restore, and reconciliation.
 
 ## 12. Agent audit contract
 
@@ -218,3 +223,13 @@ Monitor agent operations and models separately:
 - platform: authorization failures, token/session anomalies, upload threats, storage errors, queue depth, API latency/error rate.
 
 See [WORKFLOWS.md](WORKFLOWS.md) for step-by-step business flow, [API.md](API.md) for client contracts, and [ARCHITECTURE.md](ARCHITECTURE.md) for trust boundaries and production evolution.
+
+## 15. Support-chatbot and availability-control implementation
+
+`BankingSupportChatAgent` is intentionally not a general-purpose banking chatbot. It reads only the workflow records visible to the authenticated role and uses a bounded intent set: welcome, loan status, documents, bureau guidance, dormancy, approval queue, AI explanation, action boundary, or fallback. A customer is filtered to loans submitted under their username and accounts matching their customer ID; Compliance is never given loan records; internal queue summaries are filtered to the relevant approver role.
+
+The agent detects requests to approve/reject, change KYC or score, disburse, transfer, or pay money and returns `ACTION_BOUNDARY` without calling a mutating workflow service. The API audit record contains the selected intent/source and `read_only=true`, but no message or reply text.
+
+`LocalChatbotIntentTrainer` seeds 36 curated local phrases into a separate SQLite database and trains a TF-IDF (unigrams/bigrams) plus balanced logistic-regression classifier. The runtime accepts an artifact only when its registered run ID, model key, parent directory, and SHA-256 all match. Confidence below the configured threshold returns `FALLBACK`; an absent/tampered/unloadable artifact also falls back to deterministic retrieval. The classifier chooses a support topic only and cannot invoke tools.
+
+`AgentSettingsStore` exposes an Administrator-controlled enabled flag for all registered components plus the chatbot. Active API/browser workflows check their required component before work begins. A disabled required component produces an unavailable/fail-closed result; the setting never enables a weaker substitute or bypasses human approval. The local JSON file is a demo control plane only. Production needs approved change requests, dual control, centralized feature management, alerts, and an auditable emergency procedure.

@@ -20,6 +20,8 @@ The implementation follows the safest common enterprise pattern: narrow agents w
 | Escheatment is primarily a jurisdiction and records problem. | `DormancyAgent` separates outreach, clock calculation, approval, execution, and reclaim. |
 | KYC requires authoritative checks, not image understanding alone. | `IndiaKycAIAgent` treats AI as triage and requires approved PAN/Aadhaar/OVD, CKYCR, sanctions, and V-CIP integrations. |
 | Document AI is useful for extraction and risk signals. | The provider interface supports approved OCR/VLM/fraud providers but defaults to `PENDING`. |
+| Customer-facing AI needs data minimization and a clear authority boundary. | `BankingSupportChatAgent` is role-scoped/read-only, refuses mutating requests, audits intent metadata only, and excludes live chat from training. |
+| Operational AI needs an accountable stop control. | Administrator settings disable protected dependencies fail closed; the target database records availability state and audit events, while production requires formal change control. |
 
 ## KYC research and regulatory design
 

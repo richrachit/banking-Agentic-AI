@@ -37,7 +37,7 @@ Normal lending systems (future integration)
 
 `banking_agents/progression.py` exposes eight user-facing stages. The first AI-active stage is **Consent and credit-bureau assessment**, immediately after application submission. The progression is explanatory; persisted loan status and approval records are the source of truth.
 
-The browser and mobile loan forms also check required fields before submission and show a visible error state/modal when information is missing. That client-side feedback does not replace server validation: the API still validates the full request and returns a redacted field-violation response if a malformed request reaches it.
+The browser loan form checks required fields before submission and shows a visible error modal when information is missing. That client-side feedback does not replace server validation: the API still validates the full request and returns a redacted field-violation response if a malformed request reaches it.
 
 ## 3. Consent and CIBIL-style score workflow
 
@@ -192,7 +192,7 @@ It is callable by `LOAN`, `COMPLIANCE`, and `ADMIN` through the API. The caller'
 ## 9. Support-chatbot and AI-control workflow
 
 ```text
-Authenticated browser/mobile user
+Authenticated browser user
   -> submits a 1–1000 character support question
   -> role/entity scope is applied before any workflow fact is read
   -> optional verified local intent artifact classifies a bounded support intent
@@ -205,7 +205,7 @@ The chatbot can explain application status, required documents, bureau routing, 
 
 Training is deliberately separate from live chat. `scripts/train_chatbot.py` seeds only 36 curated local phrases, writes training-run metadata to `data/chatbot_training.sqlite3`, and stores the hash-recorded joblib artifact in `data/models/`. It is a local intent-routing demonstration, not a generative banking assistant or production-quality validation. If the artifact is absent, invalid, or cannot be loaded, the support assistant remains available through deterministic logic.
 
-An Administrator can list all registered component controls and change an enabled flag in the browser/mobile AI settings page or via the API. A registered component is enabled by default. For components that protect active routes, disabled means the dependent action returns `503`; the system must not work around a disabled control. The local settings file records the last Administrator actor/time but is not an enterprise change-management or emergency-kill-switch system.
+An Administrator can list all registered component controls and change an enabled flag in the browser AI settings dashboard or via the API. A registered component is enabled by default. For components that protect active routes, disabled means the dependent action returns `503`; the system must not work around a disabled control. The local settings file records the last Administrator actor/time but is not an enterprise change-management or emergency-kill-switch system.
 
 ## 10. API-to-workflow mapping
 
@@ -255,4 +255,4 @@ The local writes are not one atomic transaction. Production needs transactional 
 | `PENDING_EXTERNAL_VERIFICATION` | KYC needs an approved external provider/process |
 | `MANUAL_REVIEW` | Risk/conflict/low-confidence condition needs authorised review |
 
-For API fields and security behavior, see [API.md](API.md). For code-level agent/model boundaries, see [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md) and [MODEL_TRAINING.md](MODEL_TRAINING.md).
+For API fields and security behavior, see [API.md](API.md). For code-level agent/model boundaries, see [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md) and [MODEL_TRAINING.md](MODEL_TRAINING.md). For local stores and the PostgreSQL target, see [DATABASE.md](DATABASE.md).

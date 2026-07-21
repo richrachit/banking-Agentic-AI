@@ -31,6 +31,10 @@ Provider contract   Document/KYC        Jurisdiction policy
                        |
           OperationsAutomationAgent
                        |
+             BankingSupportChatAgent
+                       |
+             AgentSettingsStore
+                       |
      Local repository / audit / case / model stores
                        |
         PostgreSQL + object/WORM storage target
@@ -45,6 +49,7 @@ The CLI calls the same workflow agents for development and tests. The browser ap
 | Interfaces | Parse browser/API/CLI input, authenticate, authorize, shape output | `web_app.py`, `api_app.py`, `cli.py` |
 | Application service | Coordinate a user intent across agents without duplicating business flow | `loan_origination.py` |
 | Orchestration agents | Diagnose work, perform constrained transitions, create human tasks | `credit_bureau_agent.py`, `loan_agent.py`, `dormancy_agent.py`, `automation_agent.py` |
+| Support assistant | Read role-scoped facts and return bounded explanations/navigation only | `chat_agent.py`, `chatbot_training.py` |
 | Verification/providers | Evaluate documents/KYC or obtain an external normalized fact | `document_verification.py`, `document_ai.py`, `kyc_ai.py`, `CreditBureauProvider` |
 | Policy/domain | Define thresholds, statuses, applications, accounts, approvals | `policy.py`, `models.py` |
 | Persistence/audit | Store active state, case history, user registry, model governance, events | `repository.py`, `audit.py`, `*_platform.py`, `training_store.py` |
@@ -112,6 +117,7 @@ The term “agent” does not imply every component is a trained model.
 | Deterministic controls | Credit Bureau Decision, India KYC, product document rules | Policy/consent/prerequisites must remain explicit and versionable |
 | Optional pretrained model | Qwen2.5-VL document provider | Visual extraction/triage suggestion only |
 | Locally trainable advisory | Loan exception and document review classifiers | Optional routing signal; never state-changing authority |
+| Bounded support-intent model | Banking Support Chatbot | Optional intent selection only; deterministic fallback; no tools or write authority |
 
 The advisory classifiers are not currently invoked by the web/API origination flow. Their registry and artifacts are a separate governance demonstration. This separation prevents a synthetic demonstration model from silently becoming a credit decision engine.
 
@@ -126,6 +132,8 @@ The advisory classifiers are not currently invoked by the web/API origination fl
 | `data/loan_exception_cases.sqlite3` | Loan case platform | Exception/document history |
 | `data/dormancy_cases.sqlite3` | Dormancy case platform | Case/outreach/filing history |
 | `data/model_training.sqlite3` | Model training database | Catalog, derived features, labels, runs, predictions |
+| `data/chatbot_training.sqlite3` | Chatbot training database | Curated support phrases and metadata only; no live chats/replies |
+| `data/agent_settings.json` | Local availability control | Administrator enabled state and latest change metadata; fail closed where wired |
 | `data/models/` | Local trainer | Joblib artifacts with registered SHA-256 |
 | `data/uploads/` | Web/API interface | Plain local files; no malware scan/encryption/retention guarantees |
 
@@ -141,6 +149,7 @@ Local JSON and SQLite stores can diverge if a process fails between writes. Prod
 - workflow/authority: `workflow_step`, `approval_case`, `immutable_audit_event`;
 - dormant accounts: `dormant_account_case`, `outreach_attempt`;
 - model governance: `ai_model_catalog`, `ai_training_example`, `ai_training_run`, `ai_model_prediction`.
+- AI control/chatbot governance: `ai_agent_setting`, `chatbot_training_example`, `chatbot_training_run`, `chat_assistant_event` (metadata only; no live transcript).
 
 The schema uses UUIDs, JSONB payloads, timestamps, constraints, and operational indexes as a baseline. It is not a complete migration set. A production implementation also needs:
 
@@ -159,7 +168,7 @@ Document bytes belong in encrypted object storage. PostgreSQL should retain the 
 
 | Boundary | Required controls |
 | --- | --- |
-| Mobile/browser ↔ API | TLS, approved origins, API gateway/WAF, rate limits, schema validation, short-lived tokens, device/session controls |
+| Browser ↔ API | TLS, approved origins, API gateway/WAF, rate limits, schema validation, short-lived tokens, and session controls |
 | API ↔ identity provider | OIDC/OAuth, MFA/step-up, group/role mapping, revocation, service identities |
 | Workflow ↔ CIBIL/CIC | Authorised access, purpose-specific consent, mTLS/OAuth, idempotency, signed/hashed evidence, error/no-hit semantics, reconciliation |
 | Workflow ↔ LOS/core banking | Transaction IDs, idempotency, maker-checker, limits, reconciliation, compensating actions |
@@ -223,4 +232,4 @@ RBI's [Digital Lending Directions, 2025](https://www.rbi.org.in/Scripts/Notifica
 .\.venv\Scripts\python.exe scripts\model_status.py
 ```
 
-See [API.md](API.md), [WORKFLOWS.md](WORKFLOWS.md), [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md), and [MODEL_TRAINING.md](MODEL_TRAINING.md) for detailed contracts.
+See [API.md](API.md), [WORKFLOWS.md](WORKFLOWS.md), [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md), [MODEL_TRAINING.md](MODEL_TRAINING.md), and [DATABASE.md](DATABASE.md) for detailed contracts.

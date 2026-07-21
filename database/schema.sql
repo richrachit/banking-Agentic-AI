@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE app_user (
   user_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), username text UNIQUE NOT NULL,
-  role text NOT NULL CHECK (role IN ('CUSTOMER','LOAN_OPERATIONS','CREDIT_MANAGER','COMPLIANCE','OPERATIONS','ADMIN')),
+  role text NOT NULL CHECK (role IN ('CUSTOMER','LOAN','CREDIT','LOAN_OPERATIONS','CREDIT_MANAGER','COMPLIANCE','OPERATIONS','ADMIN')),
   password_hash text NOT NULL, status text NOT NULL DEFAULT 'ACTIVE', created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE loan_application (
@@ -94,9 +94,62 @@ CREATE TABLE ai_model_prediction (
   positive_probability numeric(7,6) NOT NULL, advisory_only boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- AI operating controls and bounded support-assistant training. These tables
+-- deliberately exclude live chat messages and replies. Only reviewed,
+-- curated support examples may be inserted into chatbot_training_example.
+CREATE TABLE ai_agent_setting (
+  model_key text PRIMARY KEY,
+  enabled boolean NOT NULL DEFAULT true,
+  changed_by uuid REFERENCES app_user(user_id),
+  changed_at timestamptz NOT NULL DEFAULT now(),
+  change_reason text,
+  version integer NOT NULL DEFAULT 1 CHECK (version > 0)
+);
+CREATE TABLE chatbot_training_example (
+  example_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  example_key text UNIQUE NOT NULL,
+  utterance text NOT NULL,
+  intent text NOT NULL,
+  source text NOT NULL,
+  synthetic boolean NOT NULL DEFAULT false,
+  approved_by uuid REFERENCES app_user(user_id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE chatbot_training_run (
+  run_id text PRIMARY KEY,
+  status text NOT NULL,
+  sample_count integer NOT NULL CHECK (sample_count >= 0),
+  intent_counts jsonb NOT NULL DEFAULT '{}'::jsonb,
+  metrics jsonb NOT NULL DEFAULT '{}'::jsonb,
+  artifact_uri text,
+  artifact_sha256 text,
+  library_versions jsonb NOT NULL DEFAULT '{}'::jsonb,
+  training_data_policy text NOT NULL,
+  error_message text,
+  started_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz
+);
+-- This event has metadata only. Do not store customer chat text or generated
+-- replies here; retain those only through an explicitly approved policy.
+CREATE TABLE chat_assistant_event (
+  event_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  actor_user_id uuid REFERENCES app_user(user_id),
+  role text NOT NULL,
+  intent text NOT NULL,
+  source text NOT NULL,
+  mode text NOT NULL,
+  read_only boolean NOT NULL DEFAULT true,
+  correlation_id uuid,
+  occurred_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE INDEX ix_workflow_entity ON workflow_step(entity_type, entity_id, occurred_at);
 CREATE INDEX ix_loan_status ON loan_application(status, updated_at);
 CREATE INDEX ix_bureau_application ON credit_bureau_enquiry(application_id, completed_at);
 CREATE INDEX ix_dormancy_due ON dormant_account_case(status, transfer_due_on);
 CREATE INDEX ix_ai_training_model ON ai_training_example(model_key, label, label_source);
 CREATE INDEX ix_ai_run_model ON ai_training_run(model_key, status, started_at);
+CREATE INDEX ix_chatbot_training_intent ON chatbot_training_example(intent, source);
+CREATE INDEX ix_chatbot_run_status ON chatbot_training_run(status, started_at);
+CREATE INDEX ix_chat_assistant_actor ON chat_assistant_event(actor_user_id, occurred_at);

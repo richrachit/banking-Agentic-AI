@@ -56,8 +56,11 @@ class LocalChatbotTrainingTests(unittest.TestCase):
         runtime = LocalChatbotIntentRuntime(self.database, self.output_directory)
         self.assertIsNotNone(runtime.predict(secret_message))
 
-        with sqlite3.connect(self.root / "chatbot_training.sqlite3") as connection:
+        connection = sqlite3.connect(self.root / "chatbot_training.sqlite3")
+        try:
             stored_examples = connection.execute("SELECT utterance FROM chatbot_training_example").fetchall()
+        finally:
+            connection.close()
         self.assertNotIn(secret_message, [row[0] for row in stored_examples])
         self.assertNotIn(secret_message.encode("utf-8"), (self.root / "chatbot_training.sqlite3").read_bytes())
 

@@ -354,11 +354,11 @@ class ApiAppTests(unittest.TestCase):
         allowed = self.client.options(
             "/api/v1/health",
             headers={
-                "Origin": "http://localhost:8081",
+                "Origin": "http://localhost:8000",
                 "Access-Control-Request-Method": "GET",
             },
         )
-        self.assertEqual(allowed.headers.get("access-control-allow-origin"), "http://localhost:8081")
+        self.assertEqual(allowed.headers.get("access-control-allow-origin"), "http://localhost:8000")
         denied = self.client.options(
             "/api/v1/health",
             headers={

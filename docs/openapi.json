@@ -1,6 +1,20 @@
 {
   "components": {
     "schemas": {
+      "AgentSettingRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "AgentSettingRequest",
+        "type": "object"
+      },
       "ApprovalDecisionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -57,6 +71,22 @@
           "file"
         ],
         "title": "Body_upload_document_api_v1_loan_applications__application_id__documents_post",
+        "type": "object"
+      },
+      "ChatMessageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ChatMessageRequest",
         "type": "object"
       },
       "CreditReviewRequest": {
@@ -498,6 +528,85 @@
         ]
       }
     },
+    "/api/v1/ai/agents": {
+      "get": {
+        "operationId": "agent_settings_api_v1_ai_agents_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Agent Settings",
+        "tags": [
+          "AI governance"
+        ]
+      }
+    },
+    "/api/v1/ai/agents/{model_key}/settings": {
+      "post": {
+        "operationId": "update_agent_setting_api_v1_ai_agents__model_key__settings_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_key",
+            "required": true,
+            "schema": {
+              "title": "Model Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentSettingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Agent Setting",
+        "tags": [
+          "AI governance"
+        ]
+      }
+    },
     "/api/v1/ai/models": {
       "get": {
         "operationId": "model_registry_api_v1_ai_models_get",
@@ -744,6 +853,50 @@
         "summary": "Run Automation",
         "tags": [
           "Automation"
+        ]
+      }
+    },
+    "/api/v1/chat/messages": {
+      "post": {
+        "operationId": "chat_message_api_v1_chat_messages_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Chat Message",
+        "tags": [
+          "Chat assistant"
         ]
       }
     },

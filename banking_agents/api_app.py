@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Versioned JSON API for web, Android, and iOS clients.
+"""Versioned JSON API for browser and approved API clients.
 
 Run locally with:
     python -m uvicorn banking_agents.api_app:app --host 127.0.0.1 --port 8001
@@ -188,7 +188,7 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
     )
     configured_origins = os.getenv(
         "BANKING_CORS_ORIGINS",
-        "http://localhost:8081,http://127.0.0.1:8081",
+        "http://localhost:8000,http://127.0.0.1:8000",
     )
     cors_origins = [
         origin.strip()

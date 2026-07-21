@@ -1,6 +1,6 @@
 # Backend API Reference
 
-This document describes the API implemented by `banking_agents/api_app.py`. The API is a local-development interface for the browser, Android, and iOS clients. It is not a production banking API: authentication tokens are in memory, workflow state is stored in local JSON/SQLite files, and the credit-bureau provider uses fictional fixtures.
+This document describes the API implemented by `banking_agents/api_app.py`. The API is a local-development interface for the browser and approved API clients. It is not a production banking API: authentication tokens are in memory, workflow state is stored in local JSON/SQLite files, and the credit-bureau provider uses fictional fixtures.
 
 ## Start the API
 
@@ -23,10 +23,10 @@ The default endpoints are:
 
 Set `BANKING_DATA_DIR` before startup to use a different local data directory. The default is `<project>/data` when the server is started from the project root.
 
-For an Expo web client, the local CORS defaults allow `http://localhost:8081` and `http://127.0.0.1:8081`. Override them with a comma-separated allowlist before startup:
+For a browser client, the local CORS defaults allow `http://localhost:8000` and `http://127.0.0.1:8000`. Override them with a comma-separated allowlist before startup:
 
 ```powershell
-$env:BANKING_CORS_ORIGINS = "http://localhost:8081,https://approved.example"
+$env:BANKING_CORS_ORIGINS = "http://localhost:8000,https://approved.example"
 ```
 
 ## Protocol conventions
@@ -76,7 +76,7 @@ Request-shape errors also use `application/problem+json`. Their payload adds a `
 
 ### Client validation and error UX
 
-The browser and mobile clients validate required loan-application fields before sending a request and surface a visible error message/modal that asks the user to complete the missing information. This is a usability layer only: the API still validates every request, rejects unknown fields, and returns the redacted problem response described above. Clients should map `violations` to their relevant field without rendering back the rejected value or other sensitive data.
+The browser validates required loan-application fields before sending a request and surfaces a visible error modal that asks the user to complete the missing information. This is a usability layer only: the API still validates every request, rejects unknown fields, and returns the redacted problem response described above. Clients should map `violations` to their relevant field without rendering back the rejected value or other sensitive data.
 
 ### Content types
 
@@ -310,7 +310,7 @@ POST /api/v1/chat/messages
 
 `message` is required and limited to 1–1000 characters. The response contains a `reply`, normalized `intent`, `source`, `mode`, `suggested_prompts`, optional navigation `actions`, and a `read_only=true` authority boundary. The assistant can explain role-scoped workflow information such as loan status, document requirements, bureau routing, approval queues, agent controls, and dormant-account reactivation.
 
-It applies the same data scope as the application: a customer can only receive information about loans they submitted and accounts they own; Compliance has no loan-data view; approval counts are limited to the caller's authorised queue. It refuses requests to submit, approve, reject, verify KYC, change a score, disburse, transfer funds, pay a claim, or update an account. The corresponding browser/mobile pages remain the only UI navigation target; all workflow writes still go through their normal role/approval APIs.
+It applies the same data scope as the application: a customer can only receive information about loans they submitted and accounts they own; Compliance has no loan-data view; approval counts are limited to the caller's authorised queue. It refuses requests to submit, approve, reject, verify KYC, change a score, disburse, transfer funds, pay a claim, or update an account. The corresponding browser pages remain the only UI navigation target; all workflow writes still go through their normal role/approval APIs.
 
 The default response selection is deterministic retrieval. When a valid, hash-verified local intent artifact is available, the assistant first uses the trained intent classifier and reports `mode=TRAINED_INTENT_RETRIEVAL`; it otherwise remains available through deterministic logic. The training model is not a generative LLM and it does not have tool or banking-action authority.
 
@@ -339,16 +339,18 @@ POST /api/v1/ai/agents/{model_key}/settings
 
 The local control records the Administrator actor/time in `data/agent_settings.json` and writes an audit event. Components default to enabled. If a disabled component is used by a protected workflow route, that route returns `503` and explains that the dependent workflow is unavailable until re-enabled. It never substitutes a bypass or weaker control. Some catalogued components are governance/optional providers rather than active route dependencies; changing their local availability setting is not a substitute for production model-serving, credential revocation, change approval, or operational kill-switch controls.
 
+For active local stores, PostgreSQL target tables, and the no-live-transcript chatbot data rule, see [DATABASE.md](DATABASE.md).
+
 ## Production hardening checklist
 
 - Replace local users and in-memory tokens with the bank IdP, least-privilege RBAC/ABAC, MFA, token expiry, rotation, and revocation.
 - Replace JSON/SQLite adapters with transactional PostgreSQL repositories and optimistic/concurrency controls.
 - Replace the fictional bureau provider with an authorised integration using mTLS/OAuth, explicit consent evidence, idempotency, provider response validation, and reconciliation.
 - Move document bytes to encrypted object storage; add malware/content scanning, signed upload URLs, checksums, retention, and deletion workflows.
-- Configure `BANKING_CORS_ORIGINS` as a comma-separated allowlist for browser clients. The local defaults allow `http://localhost:8081` and `http://127.0.0.1:8081`; wildcard origins are discarded and credentials are disabled.
+- Configure `BANKING_CORS_ORIGINS` as a comma-separated allowlist for browser clients. The local defaults allow `http://localhost:8000` and `http://127.0.0.1:8000`; wildcard origins are discarded and credentials are disabled.
 - Apply request/rate limits, abuse controls, structured audit logging, secret management, observability, backups, disaster recovery, and immutable evidence storage.
 - Remove the demo `ADMIN` approval capability to preserve maker-checker segregation of duties.
-- Treat generated OpenAPI as a versioned artifact and add compatibility/contract tests before releasing mobile or partner clients.
+- Treat generated OpenAPI as a versioned artifact and add compatibility/contract tests before releasing partner clients.
 
 ## Tests covering the API
 

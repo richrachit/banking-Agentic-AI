@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Read-only, role-aware assistant shared by browser and mobile clients."""
+"""Read-only, role-aware assistant for browser and API clients."""
 
 from dataclasses import asdict, dataclass
 import re

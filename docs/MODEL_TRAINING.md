@@ -36,8 +36,9 @@ The local classifiers are routing aids only. They do not mutate workflow state, 
 | `data/models/*.joblib` | Locally produced scikit-learn artifacts |
 | `data/state.json` | Source workflow states used by the collector |
 | `data/loan_exception_cases.sqlite3` | Optional weak-rule document observations used by the collector |
+| `data/chatbot_training.sqlite3` | Curated support-intent phrases and chatbot training-run metadata; never live chat messages |
 
-The matching PostgreSQL target tables are `ai_model_catalog`, `ai_training_example`, `ai_training_run`, and `ai_model_prediction` in `database/schema.sql`. The runtime has not been switched to those tables.
+The matching PostgreSQL target tables are `ai_model_catalog`, `ai_training_example`, `ai_training_run`, and `ai_model_prediction`. The separate chatbot target uses `chatbot_training_example` and `chatbot_training_run`; `chat_assistant_event` stores metadata only. See [DATABASE.md](DATABASE.md). The runtime has not been switched to those tables.
 
 ## Feature governance
 
@@ -163,6 +164,23 @@ The runtime does not update the source `LoanApplication`. Tests assert that work
 Joblib uses a pickle-based format. Hash and path checks protect against accidental replacement and unregistered artifacts, but they do not make an untrusted pickle safe. Only load artifacts produced by this controlled pipeline and protected by filesystem access controls. Scikit-learn's [model persistence guide](https://scikit-learn.org/stable/model_persistence.html) documents the arbitrary-code risk and the need to keep serving dependencies compatible with the training environment.
 
 For production, use signed artifacts in an immutable registry, build provenance/SBOMs, vulnerability scanning, isolated loading, promotion approvals, rollback, and environment pinning. Consider a safer serving format where model compatibility permits.
+
+## Local support-chatbot intent model
+
+The support assistant is trained separately from the two advisory classifiers. `banking_agents/chatbot_training.py` contains 36 reviewed local demonstration phrases across nine bounded intents: `WELCOME`, `LOAN_STATUS`, `DOCUMENT_GUIDANCE`, `CREDIT_GUIDANCE`, `DORMANCY_STATUS`, `APPROVAL_QUEUE`, `AI_EXPLANATION`, `ACTION_BOUNDARY`, and `FALLBACK`.
+
+The training store has only these curated examples and run metadata. It does not capture a browser or API chat message; it does not store an assistant reply; and it does not accept automatic feedback ingestion. This keeps the local demonstration from silently using personal customer data as training data.
+
+Run it independently:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\train_chatbot.py
+.\.venv\Scripts\python.exe scripts\chatbot_status.py
+```
+
+The implementation uses `TfidfVectorizer(ngram_range=(1, 2))` plus `LogisticRegression(class_weight="balanced", max_iter=1000, random_state=42)`, a stratified 75/25 split, and a second complete-data fit for the artifact. It records accuracy/balanced accuracy only with the explicit evaluation scope `CURATED_LOCAL_DEMO_NOT_PRODUCTION_VALIDATION`. The runtime verifies the artifact directory, registered SHA-256, run ID, and model key before deserializing it. If no verified artifact exists, it returns no prediction and the support assistant uses its deterministic topic logic instead.
+
+This model is not a generative LLM, does not have a tool interface, and cannot approve/reject, verify KYC, alter a score, disburse, transfer/pay money, or update a customer record. Treat the 36 phrases and resulting metrics as a test fixture, not a positive/negative production dataset or an accuracy claim.
 
 ## Validation required before production
 
