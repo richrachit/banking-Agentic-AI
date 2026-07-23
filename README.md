@@ -17,13 +17,13 @@ The repository combines a responsive multi-persona browser app, a versioned Fast
 | Credit-bureau step | Explicit-consent gate plus fictional local CIBIL-style fixture provider | Authorised bureau membership/API, consent evidence, idempotency, reconciliation |
 | Score routing | `<650` local demo rejection with reconsideration, `650–749`/no-history/unavailable Credit Manager review, `>=750` continues workflow | Bank-approved/versioned policy; explainability, review and dispute path |
 | Loan exception agent | Missing-document diagnosis, transient retry, income-variance resolution/approval package | LOS, DMS/OCR, KYC, fraud, affordability and notification adapters |
-| Document review | Product requirement rules, upload status, baseline provider, optional Qwen visual triage | Malware scan, authenticity/fraud models, issuer verification, human QA |
+| Document review | Deterministic product requirements, upload status, and conservative file checks; unified GenAI can draft advisory observations from supplied context | Malware scan, authenticity/fraud services, issuer verification, human QA |
 | KYC orchestration | Consent/format/risk/prerequisite checks in `IndiaKycAIAgent` | Approved PAN/Aadhaar/OVD/CKYCR/V-CIP/sanctions integrations |
 | Dormant-account lifecycle | Outreach, dormancy clocks, transfer package/approval, transfer/claim state machine | Current jurisdiction rules, actual communications, filing, ledger and reconciliation adapters |
 | Human approvals | Credit, compliance and claims approval records with audit events | Enterprise workflow, segregation of duties, delegated authority, immutable evidence |
 | Unified GenAI | One local/hosted provider contract for all advisory tasks | Independently validated model governance and production serving |
 | Support chatbot | Role-scoped, read-only deterministic fallback plus the unified GenAI task | Approved conversational design, prompt-injection testing, monitoring, retention controls, and enterprise knowledge retrieval |
-| AI agent controls | Administrator can enable/disable each registered component; dependent routes fail closed when disabled | Change management, approval, separation of duties, monitoring, and a central feature-control service |
+| AI model control | Administrator can enable/disable the one unified model; generative tasks fail closed when disabled | Change management, approval, separation of duties, monitoring, and a central feature-control service |
 | Persistence | JSON state/audit plus capability-specific SQLite stores | PostgreSQL repositories, encrypted object storage, WORM audit store |
 
 ## Personas
@@ -32,7 +32,7 @@ The repository combines a responsive multi-persona browser app, a versioned Fast
 - **Loan Operations:** reviews loan exceptions, supplies evidence, runs the exception agent, and monitors unresolved work.
 - **Credit Manager:** reviews credit-score and policy-deviation packages and records an authorised decision.
 - **Compliance Officer:** manages dormant-account lifecycle cases, transfer approvals, and reactivation/claim controls.
-- **Administrator:** sees cross-system status and local model governance, including the AI-agent availability controls. Production administration must not bypass business approval roles or change controls without governed change management.
+- **Administrator:** sees cross-system status and unified-model governance, including its availability control. Production administration must not bypass business approval roles or change controls without governed change management.
 
 ## End-to-end loan flow
 
@@ -102,7 +102,7 @@ Important modules:
 - `banking_agents/document_verification.py`, `document_ai.py`, `kyc_ai.py` — document/KYC control layers.
 - `banking_agents/unified_genai.py` — the single switchable local/hosted generative-AI contract.
 - `banking_agents/chat_agent.py` — deterministic role-scoped support fallback.
-- `banking_agents/agent_settings.py` — persisted, fail-closed availability settings for the registered components.
+- `banking_agents/agent_settings.py` — persisted, fail-closed availability setting for the unified model.
 - `database/schema.sql` — PostgreSQL target contract; the running demo does not use it yet.
 
 ## Requirements

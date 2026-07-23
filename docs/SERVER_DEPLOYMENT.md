@@ -44,6 +44,7 @@ docker compose restart api web
 docker compose down
 ```
 
-The `banking_data` volume persists application state and trained local artifacts.
+The `banking_data` volume persists application state. The `document_models`
+volume stores the optional unified local base model.
 The initializer records a marker in that volume and does not reseed or retrain
 after successful first-time initialization.

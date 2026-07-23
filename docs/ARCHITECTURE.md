@@ -115,11 +115,12 @@ The term “agent” does not imply every component is a trained model.
 | --- | --- | --- |
 | Deterministic orchestrators | Loan Exception, Dormancy, Operations Automation | Auditable state transitions and approval boundaries |
 | Deterministic controls | Credit Bureau Decision, India KYC, product document rules | Policy/consent/prerequisites must remain explicit and versionable |
-| Optional pretrained model | Qwen2.5-VL document provider | Visual extraction/triage suggestion only |
-| Locally trainable advisory | Loan exception and document review classifiers | Optional routing signal; never state-changing authority |
-| Bounded support-intent model | Banking Support Chatbot | Optional intent selection only; deterministic fallback; no tools or write authority |
+| Single learned model | `UnifiedGenerativeAI` | Switchable local/hosted advisory generation for all supported tasks |
+| Deterministic support | Banking Support Assistant fallback | Role-scoped explanations; no learned artifact or write authority |
 
-The advisory classifiers are not currently invoked by the web/API origination flow. Their registry and artifacts are a separate governance demonstration. This separation prevents a synthetic demonstration model from silently becoming a credit decision engine.
+The unified model is invoked only through bounded advisory task endpoints. It
+has no repository mutation tools. Origination, KYC, approvals, dormancy, and
+money boundaries remain deterministic and human-governed.
 
 ## 8. Active local data architecture
 
@@ -132,7 +133,7 @@ The advisory classifiers are not currently invoked by the web/API origination fl
 | `data/loan_exception_cases.sqlite3` | Loan case platform | Exception/document history |
 | `data/dormancy_cases.sqlite3` | Dormancy case platform | Case/outreach/filing history |
 | `data/agent_settings.json` | Local availability control | Administrator enabled state and latest change metadata; fail closed where wired |
-| `data/models/` | Local trainer | Joblib artifacts with registered SHA-256 |
+| `data/unified_genai_adapter/` | Unified-model trainer | Optional LoRA/QLoRA/SFT/DPO output |
 | `data/uploads/` | Web/API interface | Plain local files; no malware scan/encryption/retention guarantees |
 
 Local JSON and SQLite stores can diverge if a process fails between writes. Production workflows require one transaction/outbox strategy across authoritative state and emitted events, plus idempotent external operations.
@@ -147,7 +148,7 @@ Local JSON and SQLite stores can diverge if a process fails between writes. Prod
 - workflow/authority: `workflow_step`, `approval_case`, `immutable_audit_event`;
 - dormant accounts: `dormant_account_case`, `outreach_attempt`;
 - model governance: `ai_model_catalog`, `ai_training_example`, `ai_training_run`, `ai_model_prediction`.
-- AI control/chatbot governance: `ai_agent_setting`, `chatbot_training_example`, `chatbot_training_run`, `chat_assistant_event` (metadata only; no live transcript).
+- unified AI governance: `ai_agent_setting` and metadata-only `chat_assistant_event`.
 
 The schema uses UUIDs, JSONB payloads, timestamps, constraints, and operational indexes as a baseline. It is not a complete migration set. A production implementation also needs:
 
@@ -211,7 +212,8 @@ RBI's [Digital Lending Directions, 2025](https://www.rbi.org.in/Scripts/Notifica
 - Make external actions idempotent and safe to retry; persist intent before side effects and reconcile completion.
 - Never infer authority from model confidence. Require the correct human role when policy says so.
 - Store derived, minimized features for training; retain label source and human/synthetic provenance.
-- Never load an untrusted joblib/pickle artifact; validate registry, path, hash, and environment.
+- Never load an untrusted model adapter/checkpoint; validate provenance, path,
+  hashes, base-model compatibility, and environment before promotion.
 - Preserve backward-compatible `/api/v1` contracts or introduce a new version with migration guidance.
 - Add tests for authorization/ownership, consent, no-hit/error, success/review/reject, duplicate/retry, partial failure, approval boundaries, and artifact tampering.
 - Keep generated data, documents, credentials, databases, and artifacts out of source control.
@@ -226,8 +228,8 @@ RBI's [Digital Lending Directions, 2025](https://www.rbi.org.in/Scripts/Notifica
 .\.venv\Scripts\python.exe -m uvicorn banking_agents.api_app:app --port 8001
 # Open http://127.0.0.1:8001/docs
 
-# Model governance state
-.\.venv\Scripts\python.exe scripts\model_status.py
+# Unified model dataset and training pipeline
+.\.venv-run\Scripts\python.exe scripts\build_genai_datasets.py
 ```
 
 See [API.md](API.md), [WORKFLOWS.md](WORKFLOWS.md), [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md), [UNIFIED_GENERATIVE_AI.md](UNIFIED_GENERATIVE_AI.md), and [DATABASE.md](DATABASE.md) for detailed contracts.

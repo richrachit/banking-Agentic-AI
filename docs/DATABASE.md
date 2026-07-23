@@ -16,10 +16,12 @@ Do not place real customer information, PAN, Aadhaar, account balances, document
 | `data/credit_bureau.sqlite3` | Local bureau adapter | Fictional HMAC-keyed fixtures and lookup metadata | Does not store raw PAN; not a real bureau integration |
 | `data/loan_exception_cases.sqlite3` | Loan case platform | Exception and document review history | Local idempotency aid only |
 | `data/dormancy_cases.sqlite3` | Dormancy case platform | Outreach, filing, transfer, and claim history | Jurisdiction rules are illustrative |
-| `data/agent_settings.json` | `AgentSettingsStore` | AI component enabled state and latest Administrator change | Local control only; protected routes fail closed when disabled |
-| `data/models/*.joblib` | Local trainers | SHA-256-recorded local artifacts | Treat artifacts as trusted-only pickle/joblib inputs |
+| `data/agent_settings.json` | `AgentSettingsStore` | Unified-model enabled state and latest Administrator change | Local control only; generative tasks fail closed when disabled |
+| `data/unified_genai_adapter/` | Unified-model trainer | Optional adapter/checkpoint output | Protect as a trusted model artifact and validate before promotion |
 
-All paths above are excluded from new Git tracking. Back up only approved, sanitized development data.
+Generated runtime paths are excluded from new Git tracking. Curated development
+fixtures under `data/genai_training/` may be versioned when reviewed and contain
+no customer data.
 
 ## PostgreSQL target
 
@@ -32,7 +34,6 @@ All paths above are excluded from new Git tracking. Back up only approved, sanit
 | Bureau consent and decisions | `credit_bureau_consent`, `credit_bureau_enquiry`, `credit_policy_decision` |
 | Workflow, authority, and audit | `workflow_step`, `approval_case`, `immutable_audit_event` |
 | Dormancy lifecycle | `dormant_account_case`, `outreach_attempt` |
-| General AI model governance | `ai_model_catalog`, `ai_training_example`, `ai_training_run`, `ai_model_prediction` |
 | Unified AI availability and governance | `ai_agent_setting`, `chat_assistant_event` |
 
 `chat_assistant_event` intentionally contains metadata only: actor, role, intent, retrieval source/mode, read-only flag, correlation ID, and time. It has no message or response column.

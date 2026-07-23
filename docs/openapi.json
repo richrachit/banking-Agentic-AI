@@ -159,6 +159,56 @@
         "title": "DormancyRunRequest",
         "type": "object"
       },
+      "GenerativeTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "additionalProperties": true,
+            "title": "Context",
+            "type": "object"
+          },
+          "prompt": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "enum": [
+                  "local",
+                  "hosted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "task": {
+            "enum": [
+              "CUSTOMER_SUPPORT",
+              "LOAN_EXCEPTION_SUMMARY",
+              "DOCUMENT_REVIEW",
+              "KYC_REVIEW",
+              "CREDIT_REVIEW_DRAFT",
+              "DORMANCY_CASE_SUMMARY",
+              "COMPLIANCE_REVIEW_DRAFT"
+            ],
+            "title": "Task",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "prompt"
+        ],
+        "title": "GenerativeTaskRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -604,6 +654,74 @@
         "summary": "Update Agent Setting",
         "tags": [
           "AI governance"
+        ]
+      }
+    },
+    "/api/v1/ai/generative/status": {
+      "get": {
+        "operationId": "generative_status_api_v1_ai_generative_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Generative Status",
+        "tags": [
+          "AI governance"
+        ]
+      }
+    },
+    "/api/v1/ai/generative/tasks": {
+      "post": {
+        "operationId": "run_generative_task_api_v1_ai_generative_tasks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerativeTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Generative Task",
+        "tags": [
+          "AI advisory"
         ]
       }
     },

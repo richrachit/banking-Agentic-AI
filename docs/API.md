@@ -126,8 +126,10 @@ All paths below are relative to `/api/v1`.
 | `POST /automation/cycles` | Bearer | `LOAN`, `COMPLIANCE`, `ADMIN` | Runs the bounded loan/dormancy supervisor cycle |
 | `POST /chat/messages` | Bearer | Any authenticated role | Returns a role-scoped, read-only support-assistant response; never executes a banking action |
 | `GET /ai/models` | Bearer | `ADMIN` | The single unified generative-model status |
-| `GET /ai/agents` | Bearer | `ADMIN` | Registered component availability settings and local chatbot-training status |
-| `POST /ai/agents/{model_key}/settings` | Bearer | `ADMIN` | Enable or disable one registered component; dependent wired routes fail closed while disabled |
+| `GET /ai/agents` | Bearer | `ADMIN` | Unified-model availability setting |
+| `POST /ai/agents/{model_key}/settings` | Bearer | `ADMIN` | Enable or disable `unified_generative_ai` |
+| `GET /ai/generative/status` | Bearer | `ADMIN` | Provider configuration and supported tasks |
+| `POST /ai/generative/tasks` | Bearer | Role-scoped | Run one bounded advisory task with optional provider selection |
 
 The generated OpenAPI document is the field-level contract. The sections below explain the business behavior that cannot be inferred from schemas alone.
 
@@ -312,20 +314,26 @@ POST /api/v1/chat/messages
 
 It applies the same data scope as the application: a customer can only receive information about loans they submitted and accounts they own; Compliance has no loan-data view; approval counts are limited to the caller's authorised queue. It refuses requests to submit, approve, reject, verify KYC, change a score, disburse, transfer funds, pay a claim, or update an account. The corresponding browser pages remain the only UI navigation target; all workflow writes still go through their normal role/approval APIs.
 
-The default response selection is deterministic retrieval. When a valid, hash-verified local intent artifact is available, the assistant first uses the trained intent classifier and reports `mode=TRAINED_INTENT_RETRIEVAL`; it otherwise remains available through deterministic logic. The training model is not a generative LLM and it does not have tool or banking-action authority.
+The support endpoint uses deterministic role-scoped retrieval as a safe fallback.
+Learned advisory generation is provided only through the unified generative-task
+endpoint and has no tool or banking-action authority.
 
-The API audit event records only the actor, `chat.assistant_responded`, role-scoped chat entity, selected intent/source, and `read_only` flag. It deliberately does **not** record the message or reply. Live messages are not written to the chatbot training database or model artifact.
+The API audit event records only the actor, `chat.assistant_responded`,
+role-scoped chat entity, selected intent/source, and `read_only` flag. It
+deliberately does **not** record the message or reply.
 
 ## AI agent availability controls
 
-Administrators can inspect registered component settings and the local chatbot training summary:
+Administrators can inspect the single unified-model setting:
 
 ```http
 GET /api/v1/ai/agents
 Authorization: Bearer <admin-token>
 ```
 
-The `data.agents` array contains the model key, display name, component type, trainability, risk tier, authority boundary, enabled state, last changing actor/time, and `fail_closed_when_disabled=true`. `data.chatbotTraining` contains only the chatbot store's aggregate example/intent counts and latest-run metadata; it contains no live chat text.
+The `data.agents` array contains one entry with model key
+`unified_generative_ai`, component type, risk tier, authority boundary, enabled
+state, last changing actor/time, and `fail_closed_when_disabled=true`.
 
 To change one setting:
 
@@ -337,9 +345,15 @@ POST /api/v1/ai/agents/{model_key}/settings
 }
 ```
 
-The local control records the Administrator actor/time in `data/agent_settings.json` and writes an audit event. Components default to enabled. If a disabled component is used by a protected workflow route, that route returns `503` and explains that the dependent workflow is unavailable until re-enabled. It never substitutes a bypass or weaker control. Some catalogued components are governance/optional providers rather than active route dependencies; changing their local availability setting is not a substitute for production model-serving, credential revocation, change approval, or operational kill-switch controls.
+The local control records the Administrator actor/time in
+`data/agent_settings.json` and writes an audit event. The unified model defaults
+to enabled at the settings layer, while `GENAI_PROVIDER=disabled` remains the
+runtime default. Disabling the setting makes generative tasks return `503`.
+Deterministic workflows remain available because they are not alternative AI
+models.
 
-For active local stores, PostgreSQL target tables, and the no-live-transcript chatbot data rule, see [DATABASE.md](DATABASE.md).
+For active local stores and PostgreSQL target tables, see
+[DATABASE.md](DATABASE.md).
 
 ## Production hardening checklist
 

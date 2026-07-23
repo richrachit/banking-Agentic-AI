@@ -11,7 +11,7 @@ This document describes the workflows that the current code executes, including 
 | Credit Manager | Credit-score review and loan-deviation queue | Matching `credit.manager` approvals | Transfer unclaimed balances or disburse a loan |
 | Compliance Officer | Dormancy assessment, transfer/reactivation queue, automation cycle | Matching `compliance.officer` approvals | Approve credit deviations |
 | Claims Officer | Claim review in the domain/CLI workflow | Matching `claims.officer` approval | Other approval types |
-| Administrator | Local cross-system/model view, AI-agent availability controls, and demo automation | Current API permits any approval and may enable/disable registered components | Must not retain business-approval bypass or ungoverned production change control |
+| Administrator | Local cross-system/unified-model view, one model availability control, and demo automation | Current API permits any approval and may enable/disable the unified model | Must not retain business-approval bypass or ungoverned production change control |
 
 ## 2. Loan application and AI start point
 
@@ -205,7 +205,11 @@ The chatbot can explain application status, required documents, bureau routing, 
 
 The support assistant has a deterministic role-scoped fallback. All learned advisory generation uses the single `UnifiedGenerativeAI` contract; there is no separately trained intent classifier.
 
-An Administrator can list all registered component controls and change an enabled flag in the browser AI settings dashboard or via the API. A registered component is enabled by default. For components that protect active routes, disabled means the dependent action returns `503`; the system must not work around a disabled control. The local settings file records the last Administrator actor/time but is not an enterprise change-management or emergency-kill-switch system.
+An Administrator can inspect and change the `unified_generative_ai` enabled flag
+in the browser or API. When disabled, generative tasks return `503`; deterministic
+workflow controls continue because they are not alternate AI models. The local
+settings file records the last Administrator actor/time but is not an enterprise
+change-management or emergency-kill-switch system.
 
 ## 10. API-to-workflow mapping
 
