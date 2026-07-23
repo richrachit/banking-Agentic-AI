@@ -128,6 +128,10 @@ Generated local state is written under `data/` and is excluded from new Git trac
 
 ## Run the applications
 
+For a Linux server/container deployment that installs the API, training,
+PostgreSQL-client, and optional document-AI dependencies, see
+[Server deployment](docs/SERVER_DEPLOYMENT.md).
+
 ### Browser application
 
 ```powershell

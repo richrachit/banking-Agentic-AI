@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+.venv-run
+__pycache__
+*.py[cod]
+*.log
+.pytest_cache
+models/
+data/models/
+data/uploads/

@@ -1,13 +1,82 @@
 services:
+  model-init:
+    build:
+      context: .
+      target: runtime
+    command: ["python", "scripts/initialize_server.py"]
+    environment:
+      BANKING_DATA_DIR: /app/data
+    volumes:
+      - banking_data:/app/data
+    restart: "no"
+
+  web:
+    build:
+      context: .
+      target: ${BANKING_IMAGE_TARGET:-runtime}
+    command: ["python", "-m", "banking_agents.web_app"]
+    environment:
+      BANKING_DATA_DIR: /app/data
+      BANKING_WEB_HOST: 0.0.0.0
+      BANKING_WEB_PORT: "8000"
+      DOCUMENT_AI_PROVIDER: ${DOCUMENT_AI_PROVIDER:-baseline}
+      DOCUMENT_AI_MODEL: ${DOCUMENT_AI_MODEL:-/models/qwen2.5-vl-3b}
+    ports: ["8000:8000"]
+    volumes:
+      - banking_data:/app/data
+      - document_models:/models:ro
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      target: ${BANKING_IMAGE_TARGET:-runtime}
+    command: ["python", "-m", "uvicorn", "banking_agents.api_app:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      BANKING_DATA_DIR: /app/data
+      BANKING_CORS_ORIGINS: ${BANKING_CORS_ORIGINS:-http://localhost:8000}
+      CREDIT_BUREAU_HASH_KEY: ${CREDIT_BUREAU_HASH_KEY:-replace-this-server-secret}
+      DOCUMENT_AI_PROVIDER: ${DOCUMENT_AI_PROVIDER:-baseline}
+      DOCUMENT_AI_MODEL: ${DOCUMENT_AI_MODEL:-/models/qwen2.5-vl-3b}
+    ports: ["8001:8001"]
+    volumes:
+      - banking_data:/app/data
+      - document_models:/models:ro
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/api/v1/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  qwen-download:
+    profiles: ["document-ai"]
+    build:
+      context: .
+      target: document-ai
+    command: ["python", "scripts/download_document_model.py", "--output", "/models/qwen2.5-vl-3b"]
+    volumes:
+      - document_models:/models
+    restart: "no"
+
   postgres:
     image: postgres:16-alpine
+    profiles: ["postgres"]
     environment:
       POSTGRES_DB: banking_ai
       POSTGRES_USER: banking_ai
-      POSTGRES_PASSWORD: change-me-before-use
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-before-use}
     ports: ["5432:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
 volumes:
   postgres_data:
+  banking_data:
+  document_models:

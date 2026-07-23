@@ -1,4 +1,6 @@
 .venv/
+.venv-run/
+*.log
 **/__pycache__/
 *.py[cod]
 data/model_training.sqlite3

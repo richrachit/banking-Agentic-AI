@@ -7,6 +7,7 @@ audit log into one local workflow experience.
 from __future__ import annotations
 
 import html
+import os
 import re
 import secrets
 from datetime import date
@@ -788,8 +789,10 @@ class BankingAppHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", 8000), BankingAppHandler)
-    print("Banking app running at http://127.0.0.1:8000")
+    host = os.getenv("BANKING_WEB_HOST", "127.0.0.1")
+    port = int(os.getenv("BANKING_WEB_PORT", "8000"))
+    server = ThreadingHTTPServer((host, port), BankingAppHandler)
+    print(f"Banking app running at http://{host}:{port}")
     server.serve_forever()
 
 
