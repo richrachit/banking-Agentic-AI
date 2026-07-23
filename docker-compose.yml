@@ -19,8 +19,6 @@ services:
       BANKING_DATA_DIR: /app/data
       BANKING_WEB_HOST: 0.0.0.0
       BANKING_WEB_PORT: "8000"
-      DOCUMENT_AI_PROVIDER: ${DOCUMENT_AI_PROVIDER:-baseline}
-      DOCUMENT_AI_MODEL: ${DOCUMENT_AI_MODEL:-/models/qwen2.5-vl-3b}
     ports: ["8000:8000"]
     volumes:
       - banking_data:/app/data
@@ -39,8 +37,12 @@ services:
       BANKING_DATA_DIR: /app/data
       BANKING_CORS_ORIGINS: ${BANKING_CORS_ORIGINS:-http://localhost:8000}
       CREDIT_BUREAU_HASH_KEY: ${CREDIT_BUREAU_HASH_KEY:-replace-this-server-secret}
-      DOCUMENT_AI_PROVIDER: ${DOCUMENT_AI_PROVIDER:-baseline}
-      DOCUMENT_AI_MODEL: ${DOCUMENT_AI_MODEL:-/models/qwen2.5-vl-3b}
+      GENAI_PROVIDER: ${GENAI_PROVIDER:-disabled}
+      GENAI_ALLOWED_PROVIDERS: ${GENAI_ALLOWED_PROVIDERS:-local,hosted}
+      GENAI_LOCAL_MODEL: ${GENAI_LOCAL_MODEL:-/models/qwen2.5-1.5b-instruct}
+      GENAI_HOSTED_ENDPOINT: ${GENAI_HOSTED_ENDPOINT:-}
+      GENAI_HOSTED_MODEL: ${GENAI_HOSTED_MODEL:-}
+      GENAI_HOSTED_API_KEY: ${GENAI_HOSTED_API_KEY:-}
     ports: ["8001:8001"]
     volumes:
       - banking_data:/app/data
@@ -55,12 +57,12 @@ services:
       retries: 5
     restart: unless-stopped
 
-  qwen-download:
-    profiles: ["document-ai"]
+  genai-download:
+    profiles: ["generative-ai"]
     build:
       context: .
       target: document-ai
-    command: ["python", "scripts/download_document_model.py", "--output", "/models/qwen2.5-vl-3b"]
+    command: ["python", "scripts/download_genai_model.py", "--output", "/models/qwen2.5-1.5b-instruct"]
     volumes:
       - document_models:/models
     restart: "no"

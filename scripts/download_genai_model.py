@@ -1,4 +1,4 @@
-"""Download the optional local Qwen vision-language model."""
+"""Download the optional unified local instruction model."""
 from __future__ import annotations
 
 import argparse
@@ -6,9 +6,9 @@ from pathlib import Path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Download optional document-AI model")
-    parser.add_argument("--model", default="Qwen/Qwen2.5-VL-3B-Instruct")
-    parser.add_argument("--output", default="models/qwen2.5-vl-3b")
+    parser = argparse.ArgumentParser(description="Download the unified local generative-AI model")
+    parser.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
+    parser.add_argument("--output", default="models/qwen2.5-1.5b-instruct")
     args = parser.parse_args()
     try:
         from huggingface_hub import snapshot_download

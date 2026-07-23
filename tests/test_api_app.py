@@ -88,7 +88,7 @@ class ApiAppTests(unittest.TestCase):
         admin_headers = self.login("admin", "admin123", "ADMIN")
         response = self.client.get("/api/v1/ai/models", headers=admin_headers)
         self.assertEqual(response.status_code, 200)
-        self.assertGreaterEqual(len(response.json()["data"]["components"]), 10)
+        self.assertEqual(response.json()["data"]["modelCount"], 1)
 
     def test_chat_endpoint_requires_auth_is_read_only_and_does_not_audit_message_text(self):
         self.assertEqual(self.client.post("/api/v1/chat/messages", json={"message": "hello"}).status_code, 401)
@@ -114,7 +114,7 @@ class ApiAppTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/v1/ai/agents", headers=customer_headers).status_code, 403)
         self.assertEqual(
             self.client.post(
-                "/api/v1/ai/agents/banking_support_chatbot/settings",
+                "/api/v1/ai/agents/unified_generative_ai/settings",
                 json={"enabled": False},
                 headers=customer_headers,
             ).status_code,
@@ -125,56 +125,37 @@ class ApiAppTests(unittest.TestCase):
         listing = self.client.get("/api/v1/ai/agents", headers=admin_headers)
         self.assertEqual(listing.status_code, 200)
         settings = {item["model_key"]: item for item in listing.json()["data"]["agents"]}
-        self.assertIn("banking_support_chatbot", settings)
-        self.assertTrue(settings["banking_support_chatbot"]["fail_closed_when_disabled"])
+        self.assertEqual(set(settings), {"unified_generative_ai"})
+        self.assertTrue(settings["unified_generative_ai"]["fail_closed_when_disabled"])
 
         disabled = self.client.post(
-            "/api/v1/ai/agents/banking_support_chatbot/settings",
+            "/api/v1/ai/agents/unified_generative_ai/settings",
             json={"enabled": False},
             headers=admin_headers,
         )
         self.assertEqual(disabled.status_code, 200)
         self.assertFalse(disabled.json()["data"]["enabled"])
         unavailable = self.client.post(
-            "/api/v1/chat/messages",
-            json={"message": "What can you help me with?"},
+            "/api/v1/ai/generative/tasks",
+            json={"task": "CUSTOMER_SUPPORT", "prompt": "What can you help me with?"},
             headers=customer_headers,
         )
         self.assertEqual(unavailable.status_code, 503)
         self.assertIn("disabled", unavailable.json()["detail"].lower())
 
         enabled = self.client.post(
-            "/api/v1/ai/agents/banking_support_chatbot/settings",
+            "/api/v1/ai/agents/unified_generative_ai/settings",
             json={"enabled": True},
             headers=admin_headers,
         )
         self.assertEqual(enabled.status_code, 200)
         self.assertTrue(enabled.json()["data"]["enabled"])
-        self.assertEqual(
-            self.client.post(
-                "/api/v1/chat/messages",
-                json={"message": "What can you help me with?"},
-                headers=customer_headers,
-            ).status_code,
-            200,
-        )
-
-        self.client.post(
+        unknown = self.client.post(
             "/api/v1/ai/agents/credit_bureau_decision_agent/settings",
             json={"enabled": False},
             headers=admin_headers,
         )
-        blocked_loan = self.client.post(
-            "/api/v1/loan-applications",
-            json=self.loan_payload("DEMOA0001A"),
-            headers=customer_headers,
-        )
-        self.assertEqual(blocked_loan.status_code, 503)
-        self.client.post(
-            "/api/v1/ai/agents/credit_bureau_decision_agent/settings",
-            json={"enabled": True},
-            headers=admin_headers,
-        )
+        self.assertEqual(unknown.status_code, 404)
 
     def test_intermediate_score_approval_resumes_document_workflow_once(self):
         customer_headers = self.login()

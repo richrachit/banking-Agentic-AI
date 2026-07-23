@@ -23,17 +23,15 @@ from .agent_settings import AgentSettingsStore
 from .auth_service import AuthenticatedUser, authenticate_local_user
 from .automation_agent import OperationsAutomationAgent
 from .chat_agent import BankingSupportChatAgent
-from .chatbot_training import LocalChatbotTrainingDatabase
 from .credit_bureau_agent import CreditBureauDecisionAgent, LocalCreditBureauDatabase, LocalCreditBureauProvider
 from .dormancy_agent import DormancyAgent
 from .loan_agent import LoanExceptionAgent
 from .loan_origination import LoanOriginationService
-from .local_models import MODEL_COMPONENTS
 from .models import Account, Approval, LoanApplication
 from .policy import PolicyConfig
 from .progression import loan_progress
 from .repository import LocalRepository
-from .training_store import ModelTrainingDatabase
+from .unified_genai import UnifiedGenerativeAI
 from .user_registry import UserRegistry
 from .models import DormancyStatus, LoanStatus
 
@@ -56,6 +54,8 @@ def services() -> tuple[LocalRepository, AuditLog, LoanExceptionAgent, DormancyA
 
 
 def require_agent_enabled(model_key: str) -> None:
+    if model_key != "unified_generative_ai":
+        return
     if not AgentSettingsStore(Path.cwd() / "data" / "agent_settings.json").is_enabled(model_key):
         raise ValueError("This AI agent is disabled by an Administrator. Its dependent workflow is unavailable until re-enabled.")
 
@@ -712,37 +712,19 @@ class BankingAppHandler(BaseHTTPRequestHandler):
             sections.append("""<section class='card'><div class='card-head'><div><h2>Dormant account lifecycle</h2><p>Manage account review, transfer approvals, and compliance actions.</p></div><span class='badge'>Compliance</span></div><form method='post'><input type='hidden' name='action' value='account_input'><div class='grid'><label>Account ID<input name='account_id' placeholder='Account ID' required></label><label>Customer ID<input name='customer_id' placeholder='Customer ID' required></label><label>Jurisdiction<input name='jurisdiction' value='IN-RBI-DEA' required></label><label>Balance<input name='balance' type='number' min='0' step='0.01' placeholder='Balance' required></label><label>Last activity<input name='last_customer_activity' type='date' required></label><label>As of<input name='as_of_date' type='date' required></label></div><button>Run lifecycle</button></form><form method='post' class='stacked'><input type='hidden' name='action' value='compliance_decision'><div class='grid'><label>Approval ID<input name='approval_id' placeholder='Approval ID' required></label><label>Decision<select name='decision'><option>APPROVED</option><option>REJECTED</option></select></label><label>Decision note<input name='note' placeholder='Decision note'></label></div><button>Submit compliance decision</button></form></section>""")
             sections.append(f"""<section class='card'><div class='card-head'><div><h2>Dormant-account case register</h2><p>Latest persisted dormant-account and escheatment cases.</p></div><span class='badge'>Case register</span></div>{dormancy_table}</section>""")
         if role == "ADMIN":
-            training_database = ModelTrainingDatabase(Path.cwd() / "data" / "model_training.sqlite3")
-            training_database.sync_catalog(MODEL_COMPONENTS)
-            model_rows = []
-            for component in training_database.status_report()["components"]:
-                counts = component["examples"]
-                latest_run = component["latest_run"]
-                run_status = "Not trainable" if not component["training_supported"] else (latest_run["status"] if latest_run else "Not trained")
-                evaluation = latest_run["metrics"].get("evaluation_scope", "-") if latest_run else "-"
-                model_rows.append(
-                    f"<tr><td>{html.escape(component['display_name'])}</td>"
-                    f"<td>{html.escape(component['component_type'])}</td>"
-                    f"<td>{counts['positive']} / {counts['negative']}</td>"
-                    f"<td>{counts['human_verified']} / {counts['synthetic']}</td>"
-                    f"<td>{html.escape(run_status)}</td><td>{html.escape(evaluation)}</td></tr>"
-                )
-            sections.append(
-                "<section class='card'><div class='card-head'><div><h2>AI model and data registry</h2>"
-                "<p>Positive/negative labels, training provenance, and latest local model status. Synthetic metrics are development checks only.</p>"
-                "</div><span class='badge'>Model governance</span></div>"
-                "<table class='table'><thead><tr><th>Component</th><th>Type</th><th>Positive / negative</th>"
-                "<th>Human / synthetic</th><th>Status</th><th>Evaluation scope</th></tr></thead><tbody>"
-                + "".join(model_rows)
-                + "</tbody></table></section>"
+            genai_status = UnifiedGenerativeAI().status()
+            provider_rows = "".join(
+                f"<tr><td>{html.escape(name)}</td><td>{html.escape(str(details['model']))}</td>"
+                f"<td>{'Configured' if details['configured'] else 'Not configured'}</td></tr>"
+                for name, details in genai_status["available_providers"].items()
             )
-            chatbot_status = LocalChatbotTrainingDatabase(
-                Path.cwd() / "data" / "chatbot_training.sqlite3"
-            ).status_report()
-            chatbot_run = chatbot_status["latest_run"]
-            chatbot_summary = (
-                f"{chatbot_status['sample_count']} curated local examples; "
-                f"{chatbot_run['status'].lower() if chatbot_run else 'not trained'}"
+            sections.append(
+                "<section class='card'><div class='card-head'><div><h2>Unified generative AI</h2>"
+                f"<p>Exactly one AI model contract is active. Default provider: {html.escape(genai_status['default_provider'])}.</p>"
+                "</div><span class='badge'>One model</span></div>"
+                "<table class='table'><thead><tr><th>Provider</th><th>Model</th><th>Status</th></tr></thead><tbody>"
+                + provider_rows
+                + "</tbody></table></section>"
             )
             setting_rows = []
             for setting in AgentSettingsStore(Path.cwd() / "data" / "agent_settings.json").list_settings():
@@ -766,7 +748,7 @@ class BankingAppHandler(BaseHTTPRequestHandler):
             sections.append(
                 "<section class='card'><div class='card-head'><div><h2>AI agent controls</h2>"
                 "<p>Enable or disable each component. Disabling a workflow component fails its dependent operation closed; it never bypasses a control.</p>"
-                f"<p class='chatbot-training'>Chatbot training: {html.escape(chatbot_summary)}. Live chat text is not retained for training.</p>"
+                "<p class='chatbot-training'>One switchable local/hosted generative model; prompts are not retained for training.</p>"
                 "</div><span class='badge'>Administrator</span></div>"
                 "<table class='table'><thead><tr><th>Agent</th><th>Status</th><th>Risk</th><th>Authority boundary</th><th>Control</th></tr></thead><tbody>"
                 + "".join(setting_rows)

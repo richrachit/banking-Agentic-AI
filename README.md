@@ -5,7 +5,7 @@ A local reference application for two expensive, exception-heavy banking operati
 1. **Loan-processing exception resolution.** Applications often stop because evidence is missing or inconsistent, verification fails, or a requested decision falls outside policy. The platform diagnoses the hold, requests specific evidence, retries permitted checks, routes deviations to the correct human authority, and returns resolved cases to the main loan journey.
 2. **Dormant accounts and unclaimed balances.** Outreach, inactivity clocks, classification, transfer preparation, compliance approval, and later customer claims are coordinated through a jurisdiction-aware, auditable workflow.
 
-The repository combines a responsive multi-persona browser app, a versioned FastAPI backend, command-line workflow tools, explainable deterministic agents, optional document AI, and a governed local advisory-model training pipeline.
+The repository combines a responsive multi-persona browser app, a versioned FastAPI backend, command-line workflow tools, explainable deterministic agents, and one switchable local/hosted generative-AI advisory model.
 
 > **Reference implementation only.** This code does not connect to TransUnion CIBIL, RBI/DEA filing, UIDAI, CKYCR, a loan origination system, core banking, payments, eSign, sanctions screening, or a production identity provider. It must not be used to make live credit, KYC, regulatory, or customer-money decisions without approved integrations, legal/compliance validation, model-risk governance, security controls, and maker-checker authorization.
 
@@ -21,8 +21,8 @@ The repository combines a responsive multi-persona browser app, a versioned Fast
 | KYC orchestration | Consent/format/risk/prerequisite checks in `IndiaKycAIAgent` | Approved PAN/Aadhaar/OVD/CKYCR/V-CIP/sanctions integrations |
 | Dormant-account lifecycle | Outreach, dormancy clocks, transfer package/approval, transfer/claim state machine | Current jurisdiction rules, actual communications, filing, ledger and reconciliation adapters |
 | Human approvals | Credit, compliance and claims approval records with audit events | Enterprise workflow, segregation of duties, delegated authority, immutable evidence |
-| Local ML | Two de-identified scikit-learn advisory classifiers and ten-component registry | Independently validated data/model governance and production serving |
-| Support chatbot | Role-scoped, read-only workflow assistant with deterministic retrieval and an optional locally trained intent classifier | Approved conversational design, prompt-injection testing, monitoring, retention controls, and enterprise knowledge retrieval |
+| Unified GenAI | One local/hosted provider contract for all advisory tasks | Independently validated model governance and production serving |
+| Support chatbot | Role-scoped, read-only deterministic fallback plus the unified GenAI task | Approved conversational design, prompt-injection testing, monitoring, retention controls, and enterprise knowledge retrieval |
 | AI agent controls | Administrator can enable/disable each registered component; dependent routes fail closed when disabled | Change management, approval, separation of duties, monitoring, and a central feature-control service |
 | Persistence | JSON state/audit plus capability-specific SQLite stores | PostgreSQL repositories, encrypted object storage, WORM audit store |
 
@@ -85,7 +85,7 @@ Responsive browser UI          JSON clients
                  +-- OperationsAutomationAgent
                  +-- BankingSupportChatAgent (read-only)
                  |
-                 +-- LocalRepository + AuditLog + SQLite case/model/chatbot stores
+                 +-- LocalRepository + AuditLog + SQLite workflow stores
                  +-- AgentSettingsStore (fail-closed local controls)
                                       |
                                       +-- PostgreSQL target schema (not active)
@@ -100,8 +100,8 @@ Important modules:
 - `banking_agents/loan_agent.py` — loan exception resolution and credit-deviation approvals.
 - `banking_agents/dormancy_agent.py` — dormancy, transfer, reactivation, and claim lifecycle.
 - `banking_agents/document_verification.py`, `document_ai.py`, `kyc_ai.py` — document/KYC control layers.
-- `banking_agents/local_models.py`, `training_store.py` — advisory model features, training, artifact validation, and registry.
-- `banking_agents/chat_agent.py`, `chatbot_training.py` — role-scoped support assistant and its curated local intent-training runtime.
+- `banking_agents/unified_genai.py` — the single switchable local/hosted generative-AI contract.
+- `banking_agents/chat_agent.py` — deterministic role-scoped support fallback.
 - `banking_agents/agent_settings.py` — persisted, fail-closed availability settings for the registered components.
 - `database/schema.sql` — PostgreSQL target contract; the running demo does not use it yet.
 
@@ -110,7 +110,7 @@ Important modules:
 - Python 3.11 or newer.
 - PowerShell examples below assume Windows.
 - Docker Desktop is optional and used only to inspect the PostgreSQL target schema.
-- The browser/CLI workflow uses the Python standard library. FastAPI, training, PostgreSQL, and Qwen capabilities have separate requirements files.
+- The browser/CLI workflow uses the Python standard library. FastAPI, PostgreSQL, and the optional local unified model have separate requirements files.
 
 ## Local setup
 
@@ -119,7 +119,7 @@ From `D:\Agentic Ai`:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements-api.txt -r requirements-training.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-api.txt
 .\.venv\Scripts\python.exe -m banking_agents seed-demo
 .\.venv\Scripts\python.exe scripts\seed_credit_bureau_demo.py
 ```
@@ -128,9 +128,12 @@ Generated local state is written under `data/` and is excluded from new Git trac
 
 ## Run the applications
 
-For a Linux server/container deployment that installs the API, training,
-PostgreSQL-client, and optional document-AI dependencies, see
+For a Linux server/container deployment that installs the API,
+PostgreSQL client, and optional unified-model dependencies, see
 [Server deployment](docs/SERVER_DEPLOYMENT.md).
+
+The optional single-model advisory layer can switch between local and hosted
+inference; see [Unified generative AI](docs/UNIFIED_GENERATIVE_AI.md).
 
 ### Browser application
 
@@ -162,55 +165,13 @@ Open `http://127.0.0.1:8001/docs`. See [docs/API.md](docs/API.md) for endpoint r
 
 `seed-demo` and `reset-demo` both replace the local demo loan/account state and clear the local audit file. Do not use those commands against data you intend to retain.
 
-## Build and exercise the local advisory models
+## One unified generative AI
 
-The project catalogs ten AI/control components. Only `loan_exception_resolution_advisory` and `document_review_advisory` are locally trainable. Both are advisory and are not wired into automatic credit decisions.
-
-```powershell
-# Collect available de-identified local labels and catalog all components
-.\.venv\Scripts\python.exe scripts\build_training_database.py
-
-# Add generated positive/negative fixtures strictly for pipeline testing
-.\.venv\Scripts\python.exe scripts\build_training_database.py --include-synthetic-demo
-
-# Exercise training on the synthetic demo set
-.\.venv\Scripts\python.exe scripts\train_local_models.py --allow-synthetic-demo
-
-# Inspect catalog, data counts, provenance, metrics, and artifact hashes
-.\.venv\Scripts\python.exe scripts\model_status.py
-
-# Advisory score only; source loan state is not changed
-.\.venv\Scripts\python.exe scripts\score_local_model.py --application-id LN-1002
-```
-
-Normal training fails closed unless each trainable model has at least 20 human-verified positive and 20 human-verified negative labels. Synthetic/weak-label accuracy is not production validation. See [docs/MODEL_TRAINING.md](docs/MODEL_TRAINING.md).
-
-### Train the local support-chatbot intent model
-
-The support assistant works with deterministic, role-scoped retrieval before a chatbot artifact exists. The optional classifier only chooses one of the bounded support intents; it never receives tool authority or changes a loan, account, approval, KYC, score, or money state.
-
-```powershell
-# Seeds 36 curated local demo phrases, trains TF-IDF + logistic regression,
-# and writes a hash-recorded artifact below data/models/
-.\.venv\Scripts\python.exe scripts\train_chatbot.py
-
-# Inspect curated example counts and the most recent training run
-.\.venv\Scripts\python.exe scripts\chatbot_status.py
-```
-
-Only the curated phrases in `banking_agents/chatbot_training.py` are inserted into `data/chatbot_training.sqlite3`. Live browser/API messages are not stored in that training database, audit detail, or model artifact. The run's evaluation scope is explicitly `CURATED_LOCAL_DEMO_NOT_PRODUCTION_VALIDATION`; it is not a customer-data model or production-quality evaluation.
-
-Administrators can inspect every component and enable/disable it in the browser dashboard. Disabling a component makes dependent operations unavailable with a fail-closed response; it does not bypass the control. The API equivalents are documented in [docs/API.md](docs/API.md).
-
-## Optional local document-vision provider
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-ai.txt
-.\.venv\Scripts\python.exe scripts\download_document_model.py
-$env:DOCUMENT_AI_PROVIDER = "qwen"
-```
-
-The optional Qwen2.5-VL provider can classify/extract visual document observations for review. It can require substantial hardware and disk, and its output always remains a suggestion; it cannot authenticate identity or approve a loan. Review the model card/licence and organizational data controls before download or use.
+The repository now has exactly one learned-model contract:
+`UnifiedGenerativeAI`. It handles customer-support, loan, document/KYC, credit,
+dormancy, and compliance advisory tasks and can switch between an approved local
+or hosted provider. Deterministic policy and human approvals remain
+authoritative. See [Unified generative AI](docs/UNIFIED_GENERATIVE_AI.md).
 
 ## PostgreSQL target schema
 
@@ -241,10 +202,7 @@ Run tests as a module from the project root. Directly running `python tests\test
 | `data/credit_bureau.sqlite3` | Fictional HMAC-keyed score fixtures and lookup audit |
 | `data/loan_exception_cases.sqlite3` | Loan exception/document case history |
 | `data/dormancy_cases.sqlite3` | Dormancy/outreach/filing case history |
-| `data/model_training.sqlite3` | Model catalog, examples, runs, and advisory predictions |
-| `data/models/` | Hash-registered local joblib artifacts |
-| `data/chatbot_training.sqlite3` | Curated chatbot intent examples and chatbot training-run metadata; never live chat messages |
-| `data/agent_settings.json` | Local Administrator enable/disable settings and last change actor/time for registered components |
+| `data/agent_settings.json` | Administrator enable/disable setting for the unified generative model |
 | `data/uploads/` | Unencrypted local uploaded files; development only |
 
 ## Documentation
@@ -254,7 +212,7 @@ Run tests as a module from the project root. Directly running `python tests\test
 - [Workflow reference](docs/WORKFLOWS.md)
 - [Architecture and coding standards](docs/ARCHITECTURE.md)
 - [AI agent technical reference](docs/AI_AGENTS_TECHNICAL.md)
-- [Local model training and governance](docs/MODEL_TRAINING.md)
+- [Unified generative AI](docs/UNIFIED_GENERATIVE_AI.md)
 - [Database design and local-data boundaries](docs/DATABASE.md)
 - [Code/module map](docs/CODE_DOCUMENTATION.md)
 - [Research notes](docs/RESEARCH.md)

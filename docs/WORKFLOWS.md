@@ -203,7 +203,7 @@ Authenticated browser user
 
 The chatbot can explain application status, required documents, bureau routing, approved-role queues, agent boundaries, and dormant-account reactivation. It cannot submit or amend an application, make/override a decision, verify KYC, disburse, transfer or pay money, or mutate an account. A customer sees only their own loans/accounts; Compliance cannot retrieve loan information; internal approval summaries are limited to each role's queue.
 
-Training is deliberately separate from live chat. `scripts/train_chatbot.py` seeds only 36 curated local phrases, writes training-run metadata to `data/chatbot_training.sqlite3`, and stores the hash-recorded joblib artifact in `data/models/`. It is a local intent-routing demonstration, not a generative banking assistant or production-quality validation. If the artifact is absent, invalid, or cannot be loaded, the support assistant remains available through deterministic logic.
+The support assistant has a deterministic role-scoped fallback. All learned advisory generation uses the single `UnifiedGenerativeAI` contract; there is no separately trained intent classifier.
 
 An Administrator can list all registered component controls and change an enabled flag in the browser AI settings dashboard or via the API. A registered component is enabled by default. For components that protect active routes, disabled means the dependent action returns `503`; the system must not work around a disabled control. The local settings file records the last Administrator actor/time but is not an enterprise change-management or emergency-kill-switch system.
 
@@ -237,8 +237,7 @@ Each current operation can write one or more local stores:
 | Exception/document cases | `data/loan_exception_cases.sqlite3` | `loan_document`, `workflow_step` |
 | Dormancy/outreach/filing | `data/dormancy_cases.sqlite3` | `outreach_attempt`, `workflow_step` |
 | Actor/action trail | `data/audit.jsonl` | `immutable_audit_event` plus WORM store |
-| Model lifecycle | `data/model_training.sqlite3`, `data/models/` | `ai_model_catalog`, `ai_training_example`, `ai_training_run`, `ai_model_prediction`, artifact registry |
-| Chatbot lifecycle | `data/chatbot_training.sqlite3`, `data/models/` | `chatbot_training_example`, `chatbot_training_run`, artifact registry; no live messages |
+| Unified GenAI lifecycle | Provider configuration and approved external/local model storage | One switchable advisory-model contract |
 | Agent availability | `data/agent_settings.json` | `ai_agent_setting`, audited change-control event |
 
 The local writes are not one atomic transaction. Production needs transactional state/outbox, retries, reconciliation, and duplicate protection across every external side effect.
@@ -255,4 +254,4 @@ The local writes are not one atomic transaction. Production needs transactional 
 | `PENDING_EXTERNAL_VERIFICATION` | KYC needs an approved external provider/process |
 | `MANUAL_REVIEW` | Risk/conflict/low-confidence condition needs authorised review |
 
-For API fields and security behavior, see [API.md](API.md). For code-level agent/model boundaries, see [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md) and [MODEL_TRAINING.md](MODEL_TRAINING.md). For local stores and the PostgreSQL target, see [DATABASE.md](DATABASE.md).
+For API fields and security behavior, see [API.md](API.md). For model configuration, see [UNIFIED_GENERATIVE_AI.md](UNIFIED_GENERATIVE_AI.md). For local stores and the PostgreSQL target, see [DATABASE.md](DATABASE.md).

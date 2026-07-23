@@ -125,7 +125,7 @@ All paths below are relative to `/api/v1`.
 | `POST /dormancy/cycles` | Bearer | `COMPLIANCE`, `ADMIN` | Saves the supplied account facts and evaluates its lifecycle at an as-of date |
 | `POST /automation/cycles` | Bearer | `LOAN`, `COMPLIANCE`, `ADMIN` | Runs the bounded loan/dormancy supervisor cycle |
 | `POST /chat/messages` | Bearer | Any authenticated role | Returns a role-scoped, read-only support-assistant response; never executes a banking action |
-| `GET /ai/models` | Bearer | `ADMIN` | Model catalog, local data counts, and latest training-run metadata |
+| `GET /ai/models` | Bearer | `ADMIN` | The single unified generative-model status |
 | `GET /ai/agents` | Bearer | `ADMIN` | Registered component availability settings and local chatbot-training status |
 | `POST /ai/agents/{model_key}/settings` | Bearer | `ADMIN` | Enable or disable one registered component; dependent wired routes fail closed while disabled |
 

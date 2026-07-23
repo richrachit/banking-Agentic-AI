@@ -49,11 +49,11 @@ The CLI calls the same workflow agents for development and tests. The browser ap
 | Interfaces | Parse browser/API/CLI input, authenticate, authorize, shape output | `web_app.py`, `api_app.py`, `cli.py` |
 | Application service | Coordinate a user intent across agents without duplicating business flow | `loan_origination.py` |
 | Orchestration agents | Diagnose work, perform constrained transitions, create human tasks | `credit_bureau_agent.py`, `loan_agent.py`, `dormancy_agent.py`, `automation_agent.py` |
-| Support assistant | Read role-scoped facts and return bounded explanations/navigation only | `chat_agent.py`, `chatbot_training.py` |
+| Support assistant | Read role-scoped facts and return bounded explanations/navigation only | `chat_agent.py`, `unified_genai.py` |
 | Verification/providers | Evaluate documents/KYC or obtain an external normalized fact | `document_verification.py`, `document_ai.py`, `kyc_ai.py`, `CreditBureauProvider` |
 | Policy/domain | Define thresholds, statuses, applications, accounts, approvals | `policy.py`, `models.py` |
-| Persistence/audit | Store active state, case history, user registry, model governance, events | `repository.py`, `audit.py`, `*_platform.py`, `training_store.py` |
-| Model lifecycle | Build derived features, collect labels, train/load advisory artifacts | `local_models.py`, `scripts/*model*.py` |
+| Persistence/audit | Store active state, case history, user registry, model governance, events | `repository.py`, `audit.py`, `*_platform.py` |
+| Model lifecycle | Switch between the one approved local or hosted model | `unified_genai.py` |
 
 Rules and orchestration must not depend on a specific external vendor. A real CIBIL, LOS, KYC, document, notification, filing, or payment connection should implement a narrow adapter and return normalized facts to the domain layer.
 
@@ -131,8 +131,6 @@ The advisory classifiers are not currently invoked by the web/API origination fl
 | `data/credit_bureau.sqlite3` | Local bureau database | Fictional HMAC-keyed fixtures/checks; not CIBIL |
 | `data/loan_exception_cases.sqlite3` | Loan case platform | Exception/document history |
 | `data/dormancy_cases.sqlite3` | Dormancy case platform | Case/outreach/filing history |
-| `data/model_training.sqlite3` | Model training database | Catalog, derived features, labels, runs, predictions |
-| `data/chatbot_training.sqlite3` | Chatbot training database | Curated support phrases and metadata only; no live chats/replies |
 | `data/agent_settings.json` | Local availability control | Administrator enabled state and latest change metadata; fail closed where wired |
 | `data/models/` | Local trainer | Joblib artifacts with registered SHA-256 |
 | `data/uploads/` | Web/API interface | Plain local files; no malware scan/encryption/retention guarantees |
@@ -232,4 +230,4 @@ RBI's [Digital Lending Directions, 2025](https://www.rbi.org.in/Scripts/Notifica
 .\.venv\Scripts\python.exe scripts\model_status.py
 ```
 
-See [API.md](API.md), [WORKFLOWS.md](WORKFLOWS.md), [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md), [MODEL_TRAINING.md](MODEL_TRAINING.md), and [DATABASE.md](DATABASE.md) for detailed contracts.
+See [API.md](API.md), [WORKFLOWS.md](WORKFLOWS.md), [AI_AGENTS_TECHNICAL.md](AI_AGENTS_TECHNICAL.md), [UNIFIED_GENERATIVE_AI.md](UNIFIED_GENERATIVE_AI.md), and [DATABASE.md](DATABASE.md) for detailed contracts.

@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements-api.txt requirements-training.txt requirements-postgres.txt requirements-server.txt ./
+COPY requirements-api.txt requirements-postgres.txt requirements-server.txt ./
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r requirements-server.txt
 

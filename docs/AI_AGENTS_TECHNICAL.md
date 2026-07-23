@@ -1,6 +1,6 @@
 # AI Agents: Technical Reference
 
-This document explains the implemented agents, models, inputs, outputs, state changes, and authority limits. “Agentic AI” here means bounded orchestration around deterministic policy, optional model signals, tools, persistence, audit, and human approvals. It does not mean unsupervised authority over identity, credit, regulation, or customer money.
+This document explains the implemented agents, inputs, outputs, state changes, and authority limits. The only learned model is the switchable `UnifiedGenerativeAI`; all other components are deterministic policy/workflow controls. “Agentic AI” here means bounded orchestration around deterministic policy, one advisory model, tools, persistence, audit, and human approvals. It does not mean unsupervised authority over identity, credit, regulation, or customer money.
 
 ## 1. Execution topology
 
@@ -45,7 +45,7 @@ The active web/API workflow is deterministic. Locally trained classifiers are ke
 | Document Review Advisory | Trained scikit-learn classifier | Explicit local runtime call | Usable/review pattern probability | No authenticity/KYC/approval |
 | Banking Support Chatbot | Deterministic retrieval plus optional trained intent classifier | Authenticated browser/API support question | Role-scoped explanation, safe navigation hints, bounded intent | No workflow mutation, tool call, decision, or customer-money authority |
 
-The catalog persisted by `ModelTrainingDatabase` also includes the baseline document provider and product document rules as distinct governed components. See [MODEL_TRAINING.md](MODEL_TRAINING.md).
+The AI registry contains only `UnifiedGenerativeAI`. Baseline document and product rules are deterministic controls, not AI models. See [UNIFIED_GENERATIVE_AI.md](UNIFIED_GENERATIVE_AI.md).
 
 ## 3. Credit Bureau Decision Agent
 

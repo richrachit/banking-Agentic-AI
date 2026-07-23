@@ -1,4 +1,3 @@
-# Core server, API, local advisory classifiers, chatbot model, and PostgreSQL client.
+# Core server, unified GenAI API, and PostgreSQL client.
 -r requirements-api.txt
--r requirements-training.txt
 -r requirements-postgres.txt

@@ -1,5 +1,5 @@
-# Optional local document-AI runtime. Review security, model licensing, data
-# residency, hardware capacity, and customer consent before installation.
+# Optional runtime for the one local unified generative model. Review security,
+# model licensing, data residency, and hardware capacity before installation.
 torch>=2.6
 transformers>=4.51
 accelerate>=1.3

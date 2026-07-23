@@ -31,7 +31,6 @@ from .agent_settings import AgentSettingsStore
 from .auth_service import AuthenticatedUser, authenticate_local_user
 from .automation_agent import OperationsAutomationAgent
 from .chat_agent import BankingSupportChatAgent
-from .chatbot_training import LocalChatbotTrainingDatabase
 from .credit_bureau_agent import (
     CreditBureauDecisionAgent,
     LocalCreditBureauDatabase,
@@ -40,12 +39,11 @@ from .credit_bureau_agent import (
 from .dormancy_agent import DormancyAgent
 from .loan_agent import LoanExceptionAgent
 from .loan_origination import LoanOriginationService
-from .local_models import MODEL_COMPONENTS
 from .models import Account, DormancyStatus, LoanApplication
 from .policy import PolicyConfig
 from .progression import loan_progress
 from .repository import LocalRepository
-from .training_store import ModelTrainingDatabase
+from .unified_genai import SUPPORTED_TASKS, UnifiedGenerativeAI
 from .user_registry import UserRegistry
 
 
@@ -142,6 +140,21 @@ class AgentSettingRequest(StrictRequest):
     enabled: bool
 
 
+class GenerativeTaskRequest(StrictRequest):
+    task: Literal[
+        "CUSTOMER_SUPPORT",
+        "LOAN_EXCEPTION_SUMMARY",
+        "DOCUMENT_REVIEW",
+        "KYC_REVIEW",
+        "CREDIT_REVIEW_DRAFT",
+        "DORMANCY_CASE_SUMMARY",
+        "COMPLIANCE_REVIEW_DRAFT",
+    ]
+    prompt: str = Field(min_length=1, max_length=4000)
+    context: dict[str, Any] = Field(default_factory=dict)
+    provider: Literal["local", "hosted"] | None = None
+
+
 class ApiRuntime:
     def __init__(self, data_directory: Path) -> None:
         self.data_directory = data_directory
@@ -167,6 +180,8 @@ class ApiRuntime:
         return AgentSettingsStore(self.data_directory / "agent_settings.json")
 
     def require_agent_enabled(self, model_key: str) -> None:
+        if model_key != "unified_generative_ai":
+            return
         if not self.agent_settings().is_enabled(model_key):
             raise HTTPException(
                 503,
@@ -724,7 +739,6 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
 
     @api.post("/api/v1/chat/messages", tags=["Chat assistant"])
     def chat_message(payload: ChatMessageRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
-        runtime.require_agent_enabled("banking_support_chatbot")
         repository, audit, _, _, _ = runtime.services()
         result = BankingSupportChatAgent(repository).respond(payload.message, current)
         audit.write(
@@ -739,14 +753,7 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
     @api.get("/api/v1/ai/agents", tags=["AI governance"])
     def agent_settings(request: Request, current: AuthenticatedUser = Depends(identity)):
         allow(current, "ADMIN")
-        chatbot_training = LocalChatbotTrainingDatabase(data_path / "chatbot_training.sqlite3").status_report()
-        return response(
-            request,
-            {
-                "agents": runtime.agent_settings().list_settings(),
-                "chatbotTraining": chatbot_training,
-            },
-        )
+        return response(request, {"agents": runtime.agent_settings().list_settings()})
 
     @api.post("/api/v1/ai/agents/{model_key}/settings", tags=["AI governance"])
     def update_agent_setting(
@@ -773,9 +780,54 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
     @api.get("/api/v1/ai/models", tags=["AI governance"])
     def model_registry(request: Request, current: AuthenticatedUser = Depends(identity)):
         allow(current, "ADMIN")
-        database = ModelTrainingDatabase(data_path / "model_training.sqlite3")
-        database.sync_catalog(MODEL_COMPONENTS)
-        return response(request, database.status_report())
+        return response(request, {"models": [UnifiedGenerativeAI().status()], "modelCount": 1})
+
+    @api.get("/api/v1/ai/generative/status", tags=["AI governance"])
+    def generative_status(request: Request, current: AuthenticatedUser = Depends(identity)):
+        allow(current, "ADMIN")
+        return response(request, UnifiedGenerativeAI().status())
+
+    @api.post("/api/v1/ai/generative/tasks", tags=["AI advisory"])
+    def run_generative_task(
+        payload: GenerativeTaskRequest,
+        request: Request,
+        current: AuthenticatedUser = Depends(identity),
+    ):
+        role_tasks = {
+            "CUSTOMER": {"CUSTOMER_SUPPORT"},
+            "LOAN": {"CUSTOMER_SUPPORT", "LOAN_EXCEPTION_SUMMARY", "DOCUMENT_REVIEW", "KYC_REVIEW"},
+            "CREDIT": {"CUSTOMER_SUPPORT", "CREDIT_REVIEW_DRAFT"},
+            "COMPLIANCE": {"CUSTOMER_SUPPORT", "DORMANCY_CASE_SUMMARY", "COMPLIANCE_REVIEW_DRAFT"},
+            "ADMIN": SUPPORTED_TASKS,
+        }
+        if payload.task not in role_tasks.get(current.role, set()):
+            raise HTTPException(403, "The authenticated role is not authorised for this generative task.")
+        runtime.require_agent_enabled("unified_generative_ai")
+        try:
+            result = UnifiedGenerativeAI().generate(
+                payload.task,
+                payload.prompt,
+                payload.context,
+                payload.provider,
+            )
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except (RuntimeError, ValueError) as error:
+            raise HTTPException(503, str(error)) from error
+        _, audit, _, _, _ = runtime.services()
+        audit.write(
+            current.username,
+            "unified_genai.advisory_generated",
+            payload.task,
+            "GENERATED",
+            {
+                "provider": result.provider,
+                "model": result.model,
+                "advisory_only": True,
+                "prompt_or_context_recorded": False,
+            },
+        )
+        return response(request, result.to_dict())
 
     api.state.runtime = runtime
     return api

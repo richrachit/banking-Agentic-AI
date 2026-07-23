@@ -7,7 +7,6 @@ import re
 from typing import Any
 
 from .auth_service import AuthenticatedUser
-from .chatbot_training import LocalChatbotIntentRuntime, LocalChatbotTrainingDatabase
 from .document_verification import DocumentVerificationModel
 from .models import Account, Approval, LoanApplication
 from .repository import LocalRepository
@@ -54,7 +53,7 @@ class BankingSupportChatAgent:
 
     def respond(self, message: str, current: AuthenticatedUser) -> ChatAssistantResult:
         text = " ".join(message.lower().split())
-        trained_intent = self._trained_intent(text)
+        trained_intent = "FALLBACK"
         loans = self._visible_loans(current)
         accounts = self._visible_accounts(current)
         approvals = self._visible_approvals(current)
@@ -97,24 +96,6 @@ class BankingSupportChatAgent:
             current,
             self._role_actions(current.role),
         )
-
-    def _trained_intent(self, text: str) -> str:
-        """Uses a locally trained intent model when a verified artifact exists."""
-        if not text:
-            return "WELCOME"
-        try:
-            root = self.repository.state_path.parent
-            runtime = LocalChatbotIntentRuntime(
-                LocalChatbotTrainingDatabase(root / "chatbot_training.sqlite3"),
-                root / "models",
-            )
-            prediction = runtime.predict(text)
-        except Exception:
-            prediction = None
-        if prediction is None:
-            return "FALLBACK"
-        self._mode = "TRAINED_INTENT_RETRIEVAL"
-        return prediction.intent
 
     def _credit_response(self, current: AuthenticatedUser, loan: LoanApplication | None) -> ChatAssistantResult:
         if current.role == "COMPLIANCE":

@@ -10,7 +10,6 @@ provider behind this interface before using document AI in a lending decision.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
 from typing import Protocol
 
@@ -58,53 +57,11 @@ class BaselineDocumentAIProvider:
         )
 
 
-class QwenVisionDocumentAIProvider:
-    """Optional local Qwen2.5-VL provider for image-based document triage.
-
-    Its output remains PENDING: it cannot prove authenticity or replace human
-    review, identity checks, or deterministic policy controls.
-    """
-
-    def __init__(self, model_id: str | None = None) -> None:
-        self.model_id = model_id or os.getenv("DOCUMENT_AI_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct")
-        self._model = None
-        self._processor = None
-
-    def _load(self) -> None:
-        if self._model is not None:
-            return
-        try:
-            import torch
-            from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
-        except ImportError as error:
-            raise RuntimeError("Install optional AI dependencies: pip install -r requirements-ai.txt") from error
-        self._processor = AutoProcessor.from_pretrained(self.model_id)
-        self._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            self.model_id, torch_dtype="auto", device_map="auto" if torch.cuda.is_available() else "cpu"
-        )
-
-    def analyze(self, document_type: str, file_path: Path) -> DocumentAIResult:
-        if file_path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
-            return DocumentAIResult(document_type, "qwen2.5-vl", self.model_id, 0, 0, 0, {}, "PENDING", ["Convert PDF to image before visual-model analysis."])
-        self._load()
-        from PIL import Image
-        image = Image.open(file_path).convert("RGB")
-        prompt = ("Identify the expected bank document, readable key fields, expiry information, and visible quality or tampering concerns. "
-                  "Do not approve or reject it. Respond with concise JSON. Expected document: " + document_type)
-        messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}]
-        text = self._processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = self._processor(text=[text], images=[image], padding=True, return_tensors="pt").to(self._model.device)
-        generated = self._model.generate(**inputs, max_new_tokens=384)
-        response = self._processor.batch_decode(generated[:, inputs.input_ids.shape[1]:], skip_special_tokens=True)[0]
-        return DocumentAIResult(document_type, "qwen2.5-vl", self.model_id, 0, 0, 0, {"model_response": response}, "PENDING", ["Vision-model output requires deterministic validation and human review."])
-
-
 class DocumentAIPipeline:
-    """Combines the required model stages and enforces conservative decisions."""
+    """Runs deterministic file safety checks before unified GenAI review."""
 
     def __init__(self, provider: DocumentAIProvider | None = None) -> None:
-        selected = os.getenv("DOCUMENT_AI_PROVIDER", "baseline").lower()
-        self.provider = provider or (QwenVisionDocumentAIProvider() if selected == "qwen" else BaselineDocumentAIProvider())
+        self.provider = provider or BaselineDocumentAIProvider()
 
     def verify(self, document_type: str, file_path: Path) -> DocumentAIResult:
         result = self.provider.analyze(document_type, file_path)

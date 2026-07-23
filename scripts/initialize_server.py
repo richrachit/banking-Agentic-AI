@@ -24,14 +24,11 @@ def main() -> None:
 
     run("-m", "banking_agents", "seed-demo")
     run("scripts/seed_credit_bureau_demo.py")
-    run("scripts/build_training_database.py", "--include-synthetic-demo")
-    run("scripts/train_local_models.py", "--allow-synthetic-demo")
-    run("scripts/train_chatbot.py")
     MARKER.write_text(
         json.dumps(
             {
                 "status": "initialized",
-                "data_scope": "SYNTHETIC_LOCAL_DEMO_NOT_PRODUCTION_VALIDATION",
+                "model_architecture": "ONE_UNIFIED_GENERATIVE_AI",
             },
             indent=2,
         )

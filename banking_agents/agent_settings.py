@@ -7,18 +7,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .local_models import MODEL_COMPONENTS
-
-
-CHATBOT_COMPONENT = {
-    "model_key": "banking_support_chatbot",
-    "display_name": "Banking Support Chatbot",
-    "component_type": "TRAINED_INTENT_RETRIEVAL",
-    "training_supported": True,
+UNIFIED_GENAI_COMPONENT = {
+    "model_key": "unified_generative_ai",
+    "display_name": "Unified Generative AI",
+    "component_type": "SWITCHABLE_LOCAL_OR_HOSTED_GENERATIVE_MODEL",
+    "training_supported": False,
     "risk_tier": "HIGH",
     "authority_boundary": (
-        "Answers role-scoped workflow questions only. It cannot execute banking actions, make decisions, "
-        "or retain customer chat text for training."
+        "Produces role-scoped advisory summaries and drafts only. It cannot execute banking actions, approve or "
+        "reject credit, verify identity/documents, override policy, change accounts, or move money."
     ),
 }
 
@@ -55,19 +52,7 @@ class AgentSettingsStore:
 
     @staticmethod
     def _catalog() -> dict[str, dict[str, Any]]:
-        catalog = {
-            component.model_key: {
-                "model_key": component.model_key,
-                "display_name": component.display_name,
-                "component_type": component.component_type,
-                "training_supported": component.training_supported,
-                "risk_tier": component.risk_tier,
-                "authority_boundary": component.authority_boundary,
-            }
-            for component in MODEL_COMPONENTS
-        }
-        catalog[CHATBOT_COMPONENT["model_key"]] = CHATBOT_COMPONENT.copy()
-        return catalog
+        return {UNIFIED_GENAI_COMPONENT["model_key"]: UNIFIED_GENAI_COMPONENT.copy()}
 
     def is_enabled(self, model_key: str) -> bool:
         if model_key not in self._catalog():

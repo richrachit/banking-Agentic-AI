@@ -15,42 +15,15 @@ docker compose up --build -d web api
 docker compose ps
 ```
 
-The one-shot `model-init` service seeds demo data, builds the model registry,
-trains both synthetic development advisory classifiers, and trains the curated
-support-chatbot intent classifier before the servers start.
+The one-shot `model-init` service seeds demo workflow and credit-bureau fixture
+data before the servers start. There are no secondary classifier-training jobs.
 
 - Browser: `http://SERVER:8000`
 - API docs: `http://SERVER:8001/docs`
 - API health: `http://SERVER:8001/api/v1/health`
 
-The generated classifiers validate the model pipeline only. Synthetic fixtures
-are not production model validation and must not influence live banking
-decisions.
-
-## Optional Qwen document vision model
-
-The default `baseline` document provider requires no foundation-model download.
-Qwen2.5-VL-3B is optional, large, and should only be installed after model-card,
-licence, supply-chain, privacy, data-residency, RAM/VRAM, and GPU review:
-
-```sh
-docker compose --profile document-ai run --rm qwen-download
-```
-
-The downloaded model is stored in the `document_models` Docker volume. Enabling
-inference also requires a GPU-capable runtime/device configuration. Set these
-values in `.env`, rebuild `web` and `api`, and configure the Compose GPU device
-reservation for the server:
-
-```text
-BANKING_IMAGE_TARGET=document-ai
-DOCUMENT_AI_PROVIDER=qwen
-DOCUMENT_AI_MODEL=/models/qwen2.5-vl-3b
-```
-
-Do not enable Qwen merely because it downloaded successfully. Its output is a
-review suggestion and cannot authenticate identity, approve credit, or replace
-human verification.
+The only learned model is the unified generative-AI provider described in
+[UNIFIED_GENERATIVE_AI.md](UNIFIED_GENERATIVE_AI.md).
 
 ## PostgreSQL schema preview
 
