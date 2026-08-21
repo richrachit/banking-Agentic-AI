@@ -5,6 +5,8 @@ Focused reference implementation for two human-controlled banking workflows:
 1. Bank-statement and Account Aggregator income/employment verification, including transaction cleansing, categorization, analytics, ITR/GST cross-validation, fraud indicators, and explainable risk insights.
 2. Dormant-account and escheatment lifecycle, including detection, outreach, statutory clocks, configurable interest, maker-checker transfer, reclaim, alerts, pause/resume, and regulatory evidence export.
 
+The single browser home page exposes three accessible feature buttons: Bank Statement Analysis, Income & Employment Verification/Account Aggregator, and Dormant Account & Escheatment.
+
 The former generic loan-exception, credit-bureau, support-chatbot, local model-training, and document-VLM products have been removed because they are outside the supplied target flows.
 
 ## Run locally

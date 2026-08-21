@@ -1,0 +1,3 @@
+# Core server, unified GenAI API, and PostgreSQL client.
+-r requirements-api.txt
+-r requirements-postgres.txt

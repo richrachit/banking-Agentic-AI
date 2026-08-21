@@ -1,0 +1,7 @@
+# Fine-tuning for the one unified generative model.
+-r requirements-ai.txt
+datasets>=3.2,<5
+peft>=0.14,<1
+trl>=0.15,<1
+bitsandbytes>=0.45,<1; platform_system == "Linux"
+sentencepiece>=0.2,<1
