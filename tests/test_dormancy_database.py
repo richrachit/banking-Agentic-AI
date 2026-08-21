@@ -54,6 +54,24 @@ class DormancyDatabaseTests(unittest.TestCase):
             self.assertEqual(case_count, 1)
             self.assertGreaterEqual(event_count, 1)
 
+    def test_future_state_separates_dormancy_and_dea_clocks_and_tracks_response(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = LocalRepository(root / "state.json")
+            audit = AuditLog(root / "audit.jsonl")
+            agent = DormancyAgent(repo, audit, PolicyConfig(), dormancy_db_path=root / "cases.sqlite3")
+            repo.save_account(Account("A-300", "C-300", "IN-RBI-DEA", 5000.0, "2020-01-01"))
+
+            account = agent.run(date(2022, 1, 2))[0]
+            self.assertEqual(account.status, "DORMANT")
+            self.assertEqual(account.dormant_on, "2021-12-31")
+            self.assertEqual(account.transfer_due_on, "2029-12-29")
+            self.assertEqual(repo.list_approvals(), [])
+
+            account = agent.record_customer_response("A-300", date(2022, 1, 3), "APP", True)
+            self.assertEqual(account.response_channel, "APP")
+            self.assertEqual(account.kyc_route, "V_CIP_OR_KYC_REVIEW_REQUIRED")
+
 
 if __name__ == "__main__":
     unittest.main()

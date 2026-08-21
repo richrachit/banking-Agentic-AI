@@ -81,6 +81,24 @@ class Account:
     dormant_on: str | None = None
     transfer_due_on: str | None = None
     transferred_amount: float = 0.0
+    outreach_started_on: str | None = None
+    outreach_channels: list[str] = field(default_factory=list)
+    customer_responded_on: str | None = None
+    response_channel: str | None = None
+    kyc_route: str | None = None
+    reactivation_requested_on: str | None = None
+    statutory_clock_started_on: str | None = None
+    transfer_package_prepared_on: str | None = None
+    transfer_principal: float = 0.0
+    transfer_interest: float = 0.0
+    gl_reconciliation_status: str = "NOT_STARTED"
+    cbs_status: str = "NOT_STARTED"
+    ekuber_status: str = "NOT_STARTED"
+    udgam_status: str = "NOT_STARTED"
+    regulator_reference: str | None = None
+    claim_id: str | None = None
+    claim_verified_on: str | None = None
+    payout_status: str = "NOT_STARTED"
 
 
 @dataclass
@@ -93,6 +111,10 @@ class Approval:
     status: str = "PENDING"
     decision_by: str | None = None
     decision_note: str | None = None
+    requires_checker: bool = False
+    maker_by: str | None = None
+    maker_note: str | None = None
+    checker_by: str | None = None
 
 
 def to_record(value: Any) -> dict[str, Any]:

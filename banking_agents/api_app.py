@@ -114,6 +114,17 @@ class ApprovalDecisionRequest(StrictRequest):
 
 class ReactivationRequest(StrictRequest):
     kyc_confirmed: bool
+    kyc_route: Literal["V_CIP", "BRANCH_KYC", "DIGITAL_KYC"] = "V_CIP"
+
+
+class OutreachResponseRequest(StrictRequest):
+    responded_on: date
+    channel: Literal["EMAIL", "SMS", "WHATSAPP", "IVR", "APP", "LETTER"]
+    request_reactivation: bool = True
+
+
+class ReclaimRequest(StrictRequest):
+    claim_id: str = Field(min_length=1, max_length=64)
 
 
 class CreditReviewRequest(StrictRequest):
@@ -287,7 +298,7 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         if current.role == "CREDIT":
             return [item for item in items if item.required_role == "credit.manager"]
         if current.role == "COMPLIANCE":
-            return [item for item in items if item.required_role == "compliance.officer"]
+            return [item for item in items if item.required_role in {"compliance.officer", "claims.officer"}]
         if current.role == "LOAN":
             return [
                 item
@@ -561,10 +572,14 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
             approval = repository.get_approval(approval_id)
         except KeyError as error:
             raise HTTPException(404, "Approval was not found.") from error
-        role_authority = {"CREDIT": "credit.manager", "COMPLIANCE": "compliance.officer", "ADMIN": approval.required_role}[current.role]
-        if approval.required_role != role_authority:
+        authorities = {
+            "CREDIT": {"credit.manager"},
+            "COMPLIANCE": {"compliance.officer", "claims.officer"},
+            "ADMIN": {approval.required_role},
+        }[current.role]
+        if approval.required_role not in authorities:
             raise HTTPException(403, f"This approval requires {approval.required_role}.")
-        if approval.status != "PENDING":
+        if approval.status not in {"PENDING", "MAKER_APPROVED"}:
             raise HTTPException(409, "Approval has already been decided.")
         if approval.kind in {
             "CREDIT_SCORE_REVIEW",
@@ -578,6 +593,23 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         decision = payload.decision
         if decision == "REJECTED" and not payload.note.strip():
             raise HTTPException(422, "A decision note is required when rejecting an approval.")
+        if approval.requires_checker and approval.status == "PENDING" and decision == "APPROVED":
+            approval.status = "MAKER_APPROVED"
+            approval.maker_by = current.username
+            approval.maker_note = payload.note
+            repository.save_approval(approval)
+            audit.write(
+                current.username,
+                "approval.maker_approved",
+                approval.entity_id,
+                "PENDING_CHECKER",
+                {"approval_id": approval_id},
+            )
+            return response(request, {"approval": asdict(approval), "updatedEntity": None, "executedTransfers": [], "executedClaims": []})
+        if approval.requires_checker and approval.status == "MAKER_APPROVED":
+            if current.username == approval.maker_by:
+                raise HTTPException(403, "Maker and checker must be different authenticated users.")
+            approval.checker_by = current.username
         approval.status = decision
         approval.decision_by = current.username
         approval.decision_note = payload.note
@@ -627,7 +659,9 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
                     pending.decision_by = current.username
                     pending.decision_note = "Cancelled because account reactivation was approved."
                     repository.save_approval(pending)
-            audit.write(current.username, "dormancy.account_reactivated", account.account_id, "SUCCESS", {"approval_id": approval_id})
+            account.cbs_status = "REACTIVATED_LOCAL_DEMO"
+            account.kyc_route = approval.package.get("kyc_route", account.kyc_route)
+            audit.write(current.username, "dormancy.account_reactivated", account.account_id, "SUCCESS", {"approval_id": approval_id, "cbs": account.cbs_status, "simulation": True})
             updated_entity = asdict(account)
         elif approval.kind == "UNCLAIMED_TRANSFER" and decision == "REJECTED":
             account = repository.get_account(approval.entity_id)
@@ -688,11 +722,70 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
                 "ACCOUNT_REACTIVATION",
                 account.account_id,
                 "compliance.officer",
-                {"customer_id": account.customer_id, "current_status": account.status},
+                {"customer_id": account.customer_id, "current_status": account.status, "kyc_route": payload.kyc_route, "kyc_status": "CUSTOMER_CONFIRMED_PENDING_PROVIDER_VERIFICATION"},
+                requires_checker=True,
             )
         )
+        account.kyc_route = payload.kyc_route
+        account.reactivation_requested_on = date.today().isoformat()
+        repository.save_account(account)
         audit.write(current.username, "dormancy.reactivation_requested", account.account_id, "PENDING", {"approval_id": approval.approval_id})
         return response(request, asdict(approval), status=201)
+
+    @api.post("/api/v1/accounts/{account_id}/outreach-responses", tags=["Dormant accounts"])
+    def record_outreach_response(
+        account_id: str,
+        payload: OutreachResponseRequest,
+        request: Request,
+        current: AuthenticatedUser = Depends(identity),
+    ):
+        allow(current, "CUSTOMER")
+        runtime.require_agent_enabled("dormancy_agent")
+        repository, _, _, dormancy_agent, _ = runtime.services()
+        try:
+            account = repository.get_account(account_id)
+        except KeyError as error:
+            raise HTTPException(404, "Account was not found.") from error
+        if account.customer_id != current.customer_id:
+            raise HTTPException(404, "Account was not found.")
+        try:
+            updated = dormancy_agent.record_customer_response(
+                account_id, payload.responded_on, payload.channel, payload.request_reactivation
+            )
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        return response(request, asdict(updated))
+
+    @api.post("/api/v1/accounts/{account_id}/reclaims", tags=["Dormant accounts"])
+    def request_reclaim(
+        account_id: str,
+        payload: ReclaimRequest,
+        request: Request,
+        current: AuthenticatedUser = Depends(identity),
+    ):
+        allow(current, "CUSTOMER")
+        runtime.require_agent_enabled("dormancy_agent")
+        repository, _, _, dormancy_agent, _ = runtime.services()
+        try:
+            account = repository.get_account(account_id)
+        except KeyError as error:
+            raise HTTPException(404, "Account was not found.") from error
+        if account.customer_id != current.customer_id:
+            raise HTTPException(404, "Account was not found.")
+        try:
+            # Authentication plus entity ownership is the only local match.
+            # Full KYC/entitlement verification remains a claims-review gate.
+            updated = dormancy_agent.request_claim(account_id, payload.claim_id, True)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        approval = next(
+            item for item in repository.list_approvals()
+            if item.entity_id == account_id and item.kind == "CUSTOMER_RECLAIM" and item.status == "PENDING"
+        )
+        approval.package["verification_scope"] = "AUTHENTICATED_LOCAL_OWNERSHIP_MATCH_ONLY"
+        approval.package["external_kyc_entitlement_verification"] = "REQUIRED_BEFORE_PAYOUT"
+        repository.save_approval(approval)
+        return response(request, {"account": asdict(updated), "approval": asdict(approval)}, status=201)
 
     @api.post("/api/v1/dormancy/cycles", tags=["Dormant accounts"])
     def run_dormancy(payload: DormancyRunRequest, request: Request, current: AuthenticatedUser = Depends(identity)):

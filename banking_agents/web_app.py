@@ -204,10 +204,34 @@ class BankingAppHandler(BaseHTTPRequestHandler):
                 raise ValueError("Only inactive or dormant accounts can be reactivated.")
             approval = repo.create_approval(Approval(
                 approval_id=f"APR-{len(repo.list_approvals()) + 1:04d}", kind="ACCOUNT_REACTIVATION", entity_id=account.account_id,
-                required_role="compliance.officer", package={"customer_id": account.customer_id, "current_status": account.status, "request": "Customer requested dormant account reactivation"},
+                required_role="compliance.officer", package={"customer_id": account.customer_id, "current_status": account.status, "request": "Customer requested dormant account reactivation", "kyc_route": "V_CIP", "kyc_status": "CUSTOMER_CONFIRMED_PENDING_PROVIDER_VERIFICATION"}, requires_checker=True,
             ))
+            account.kyc_route = "V_CIP"
+            account.reactivation_requested_on = date.today().isoformat()
+            repo.save_account(account)
             audit.write(self._current_username(), "dormancy.reactivation_requested", account.account_id, "PENDING", {"approval_id": approval.approval_id})
             return f"Reactivation request for {account.account_id} submitted. Compliance review is required before the account can be reactivated."
+        if action == "customer_outreach_response":
+            self._allow(role, "CUSTOMER")
+            require_agent_enabled("dormancy_agent")
+            account = repo.get_account(field(values, "account_id"))
+            if account.customer_id != self._current_customer_id():
+                raise ValueError("Account was not found.")
+            updated = dormancy_agent.record_customer_response(
+                account.account_id,
+                date.today(),
+                field(values, "channel"),
+                field(values, "request_reactivation") == "YES",
+            )
+            return f"Response recorded for {updated.account_id}; KYC route: {updated.kyc_route or 'not requested'}."
+        if action == "customer_reclaim_request":
+            self._allow(role, "CUSTOMER")
+            require_agent_enabled("dormancy_agent")
+            account = repo.get_account(field(values, "account_id"))
+            if account.customer_id != self._current_customer_id():
+                raise ValueError("Account was not found.")
+            updated = dormancy_agent.request_claim(account.account_id, field(values, "claim_id"), True)
+            return f"Reclaim {updated.claim_id} submitted for maker-checker approval."
         if action == "loan_input":
             self._allow(role, "LOAN", "ADMIN")
             require_agent_enabled("loan_exception_agent")
@@ -327,13 +351,14 @@ class BankingAppHandler(BaseHTTPRequestHandler):
                 field(values, "note"),
                 self._current_username(),
             )
-            if approval.kind == "ACCOUNT_REACTIVATION" and decision == "APPROVED":
+            if approval.kind == "ACCOUNT_REACTIVATION" and approval.status == "APPROVED":
                 account = repo.get_account(approval.entity_id)
                 account.status = DormancyStatus.ACTIVE.value
                 account.outreach_sent = False
                 account.dormant_on = None
                 account.transfer_due_on = None
                 account.last_customer_activity = date.today().isoformat()
+                account.cbs_status = "REACTIVATED_LOCAL_DEMO"
                 repo.save_account(account)
                 for pending in repo.list_approvals():
                     if pending.entity_id == account.account_id and pending.kind == "UNCLAIMED_TRANSFER" and pending.status == "PENDING":
@@ -341,14 +366,14 @@ class BankingAppHandler(BaseHTTPRequestHandler):
                         pending.decision_by = self._current_username()
                         pending.decision_note = "Cancelled because account reactivation was approved."
                         repo.save_approval(pending)
-            elif approval.kind == "UNCLAIMED_TRANSFER" and decision == "REJECTED":
+            elif approval.kind == "UNCLAIMED_TRANSFER" and approval.status == "REJECTED":
                 account = repo.get_account(approval.entity_id)
                 if account.status == DormancyStatus.TRANSFER_PENDING.value:
                     account.status = DormancyStatus.DORMANT.value
                     repo.save_account(account)
-            transfer_count = len(dormancy_agent.execute_approved_transfers()) if decision == "APPROVED" else 0
-            claim_count = len(dormancy_agent.execute_approved_claims()) if decision == "APPROVED" else 0
-            return f"{approval.approval_id} marked {decision}. Executed {transfer_count} transfer(s) and {claim_count} claim(s)."
+            transfer_count = len(dormancy_agent.execute_approved_transfers()) if approval.status == "APPROVED" else 0
+            claim_count = len(dormancy_agent.execute_approved_claims()) if approval.status == "APPROVED" else 0
+            return f"{approval.approval_id} is {approval.status}. Executed {transfer_count} transfer(s) and {claim_count} claim(s)."
         if action == "run_automation":
             self._allow(role, "LOAN", "COMPLIANCE", "ADMIN")
             require_agent_enabled("operations_automation_agent")
@@ -436,12 +461,21 @@ class BankingAppHandler(BaseHTTPRequestHandler):
         approval = repo.get_approval(approval_id)
         if approval.required_role != expected:
             raise ValueError(f"Approval {approval_id} requires {approval.required_role}.")
-        if approval.status != "PENDING":
+        if approval.status not in {"PENDING", "MAKER_APPROVED"}:
             raise ValueError(f"Approval {approval_id} has already been decided.")
         if decision not in {"APPROVED", "REJECTED"}:
             raise ValueError("Choose Approved or Rejected.")
         if decision == "REJECTED" and not note.strip():
             raise ValueError("A decision note is required when rejecting an approval.")
+        if approval.requires_checker and approval.status == "PENDING" and decision == "APPROVED":
+            approval.status, approval.maker_by, approval.maker_note = "MAKER_APPROVED", actor, note
+            repo.save_approval(approval)
+            audit.write(actor, "approval.maker_approved", approval.entity_id, "PENDING_CHECKER", {"approval_id": approval_id})
+            return approval
+        if approval.requires_checker and approval.status == "MAKER_APPROVED":
+            if approval.maker_by == actor:
+                raise ValueError("Maker and checker must be different authenticated users.")
+            approval.checker_by = actor
         approval.status, approval.decision_by, approval.decision_note = decision, actor, note
         repo.save_approval(approval); audit.write(actor, "approval.decided", approval.entity_id, decision, {"approval_id": approval_id})
         return approval
@@ -692,6 +726,7 @@ class BankingAppHandler(BaseHTTPRequestHandler):
                 "Request reactivation of an inactive or dormant account.",
                 "Request reactivation of one of your inactive or dormant accounts.",
             )
+            sections.append("""<section class='card'><div class='card-head'><div><h2>Outreach response and reclaim</h2><p>Record a response to proactive outreach or raise a reclaim for funds already transferred to the local DEA simulation.</p></div><span class='badge'>Future-state service</span></div><form method='post'><input type='hidden' name='action' value='customer_outreach_response'><div class='grid'><label>Account ID<input name='account_id' required></label><label>Response channel<select name='channel'><option>APP</option><option>EMAIL</option><option>SMS</option><option>WHATSAPP</option><option>IVR</option><option>LETTER</option></select></label><label>Request reactivation<select name='request_reactivation'><option value='YES'>Yes — route to KYC/V-CIP</option><option value='NO'>No</option></select></label></div><button>Record response</button></form><form method='post' class='stacked'><input type='hidden' name='action' value='customer_reclaim_request'><div class='grid'><label>Transferred account ID<input name='account_id' required></label><label>Claim ID<input name='claim_id' required></label></div><button>Submit reclaim for verification</button></form><p>Authenticated ownership is only a local record match. Claims reviewers must complete approved KYC and entitlement verification before payout.</p></section>""")
             sections.append("""<section class='card'><div class='card-head'><div><h2>Loan application</h2><p>Complete your details and submit a new request.</p></div><span class='badge'>Customer</span></div><form method='post' enctype='multipart/form-data'><input type='hidden' name='action' value='customer_request'><div class='grid'><label>Full name<input name='applicant_name' placeholder='Full name' required></label><label>Date of birth<input name='date_of_birth' type='date' required></label><label>Email<input name='email' type='email' placeholder='Email address' required></label><label>Phone<input name='phone' placeholder='Phone number' required></label><label>Residential address<input name='residential_address' placeholder='Residential address' required></label><label>Loan product<select name='loan_product'><option>PERSONAL</option><option>HOME</option><option>BUSINESS</option></select></label><label>Requested amount<input name='requested_amount' type='number' min='1' step='0.01' placeholder='Requested loan amount' required></label><label>Tenure (months)<input name='tenure_months' type='number' min='1' placeholder='Tenure in months' required></label><label>Loan purpose<input name='loan_purpose' placeholder='Purpose of loan' required></label><label>Employment type<select name='employment_type'><option value='' selected disabled>Employment type</option><option>SALARIED</option><option>SELF_EMPLOYED</option><option>BUSINESS_OWNER</option></select></label><label>Employer/business<input name='employer_name' placeholder='Employer or business name'></label><label>Monthly income<input name='monthly_income' type='number' min='1' step='0.01' placeholder='Monthly income' required></label></div><div class='grid'><label>PAN<input name='upload_pan' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Aadhaar<input name='upload_aadhaar' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Address proof<input name='upload_address' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Bank statement<input name='upload_bank' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Income proof<input name='upload_income' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Property document<input name='upload_property' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Business registration<input name='upload_business' type='file' accept='.pdf,.png,.jpg,.jpeg'></label><label>Financial statement<input name='upload_financial' type='file' accept='.pdf,.png,.jpg,.jpeg'></label></div><button>Submit loan request</button></form></section>""")
             sections[-1] = sections[-1].replace(
                 "</div><div class='grid'><label>PAN",

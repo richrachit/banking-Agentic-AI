@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class PolicyConfig:
     income_variance_tolerance: float = 0.10
     outreach_lead_days: int = 30
+    outreach_channels: tuple[str, ...] = ("EMAIL", "SMS", "WHATSAPP", "IVR", "APP", "LETTER")
     # Illustrative credit-policy thresholds. A bank must approve/version these.
     credit_score_reject_below: int = 650
     credit_score_proceed_at_or_above: int = 750
@@ -18,8 +19,10 @@ class PolicyConfig:
     transfer_wait_days_by_jurisdiction: dict[str, int] | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "dormancy_days_by_jurisdiction", self.dormancy_days_by_jurisdiction or {"IN-RBI-DEA": 3650})
-        object.__setattr__(self, "transfer_wait_days_by_jurisdiction", self.transfer_wait_days_by_jurisdiction or {"IN-RBI-DEA": 0})
+        # Illustrative local values only: classify after two years, then keep a
+        # separate clock until the ten-year unclaimed-deposit milestone.
+        object.__setattr__(self, "dormancy_days_by_jurisdiction", self.dormancy_days_by_jurisdiction or {"IN-RBI-DEA": 365 * 2})
+        object.__setattr__(self, "transfer_wait_days_by_jurisdiction", self.transfer_wait_days_by_jurisdiction or {"IN-RBI-DEA": 365 * 8})
 
     def income_within_tolerance(self, declared: float, verified: float) -> bool:
         if declared <= 0:

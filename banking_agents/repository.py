@@ -63,7 +63,7 @@ class LocalRepository:
         # Database connection: stores approval records in data/state.json.
         state = self._read()
         for record in state["approvals"].values():
-            if record["kind"] == approval.kind and record["entity_id"] == approval.entity_id and record["status"] == "PENDING":
+            if record["kind"] == approval.kind and record["entity_id"] == approval.entity_id and record["status"] in {"PENDING", "MAKER_APPROVED"}:
                 return Approval(**record)
         state["approvals"][approval.approval_id] = to_record(approval); self._write(state)
         return approval

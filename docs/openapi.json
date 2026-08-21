@@ -330,18 +330,77 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "OutreachResponseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "enum": [
+              "EMAIL",
+              "SMS",
+              "WHATSAPP",
+              "IVR",
+              "APP",
+              "LETTER"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "request_reactivation": {
+            "default": true,
+            "title": "Request Reactivation",
+            "type": "boolean"
+          },
+          "responded_on": {
+            "format": "date",
+            "title": "Responded On",
+            "type": "string"
+          }
+        },
+        "required": [
+          "responded_on",
+          "channel"
+        ],
+        "title": "OutreachResponseRequest",
+        "type": "object"
+      },
       "ReactivationRequest": {
         "additionalProperties": false,
         "properties": {
           "kyc_confirmed": {
             "title": "Kyc Confirmed",
             "type": "boolean"
+          },
+          "kyc_route": {
+            "default": "V_CIP",
+            "enum": [
+              "V_CIP",
+              "BRANCH_KYC",
+              "DIGITAL_KYC"
+            ],
+            "title": "Kyc Route",
+            "type": "string"
           }
         },
         "required": [
           "kyc_confirmed"
         ],
         "title": "ReactivationRequest",
+        "type": "object"
+      },
+      "ReclaimRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Claim Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_id"
+        ],
+        "title": "ReclaimRequest",
         "type": "object"
       },
       "SignupRequest": {
@@ -473,6 +532,61 @@
         ]
       }
     },
+    "/api/v1/accounts/{account_id}/outreach-responses": {
+      "post": {
+        "operationId": "record_outreach_response_api_v1_accounts__account_id__outreach_responses_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutreachResponseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Record Outreach Response",
+        "tags": [
+          "Dormant accounts"
+        ]
+      }
+    },
     "/api/v1/accounts/{account_id}/reactivation-requests": {
       "post": {
         "operationId": "request_reactivation_api_v1_accounts__account_id__reactivation_requests_post",
@@ -523,6 +637,61 @@
           }
         ],
         "summary": "Request Reactivation",
+        "tags": [
+          "Dormant accounts"
+        ]
+      }
+    },
+    "/api/v1/accounts/{account_id}/reclaims": {
+      "post": {
+        "operationId": "request_reclaim_api_v1_accounts__account_id__reclaims_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReclaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Request Reclaim",
         "tags": [
           "Dormant accounts"
         ]

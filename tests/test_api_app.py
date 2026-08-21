@@ -395,7 +395,61 @@ class ApiAppTests(unittest.TestCase):
             headers=compliance_headers,
         )
         self.assertEqual(decision.status_code, 200)
-        self.assertEqual(decision.json()["data"]["updatedEntity"]["status"], "ACTIVE")
+        self.assertEqual(decision.json()["data"]["approval"]["status"], "MAKER_APPROVED")
+        self.assertIsNone(decision.json()["data"]["updatedEntity"])
+        same_actor = self.client.post(
+            f"/api/v1/approvals/{request.json()['data']['approval_id']}/decision",
+            json={"decision": "APPROVED", "note": "Attempted self-check."},
+            headers=compliance_headers,
+        )
+        self.assertEqual(same_actor.status_code, 403)
+        admin_headers = self.login("admin", "admin123", "ADMIN")
+        checker = self.client.post(
+            f"/api/v1/approvals/{request.json()['data']['approval_id']}/decision",
+            json={"decision": "APPROVED", "note": "Independent checker approved."},
+            headers=admin_headers,
+        )
+        self.assertEqual(checker.status_code, 200)
+        self.assertEqual(checker.json()["data"]["updatedEntity"]["status"], "ACTIVE")
+        self.assertEqual(checker.json()["data"]["updatedEntity"]["cbs_status"], "REACTIVATED_LOCAL_DEMO")
+
+    def test_future_state_outreach_response_and_reclaim_are_customer_scoped(self):
+        repository = LocalRepository(self.root / "state.json")
+        repository.save_account(
+            Account("ACC-OUTREACH", "CUST-1", "IN-RBI-DEA", 500, "2023-01-01", status=DormancyStatus.OUTREACH.value)
+        )
+        repository.save_account(
+            Account(
+                "ACC-TRANSFERRED",
+                "CUST-1",
+                "IN-RBI-DEA",
+                0,
+                "2010-01-01",
+                status=DormancyStatus.TRANSFERRED.value,
+                transferred_amount=750,
+            )
+        )
+        customer_headers = self.login()
+        response = self.client.post(
+            "/api/v1/accounts/ACC-OUTREACH/outreach-responses",
+            json={"responded_on": "2026-08-18", "channel": "APP", "request_reactivation": True},
+            headers=customer_headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["kyc_route"], "V_CIP_OR_KYC_REVIEW_REQUIRED")
+
+        reclaim = self.client.post(
+            "/api/v1/accounts/ACC-TRANSFERRED/reclaims",
+            json={"claim_id": "CLM-1001"},
+            headers=customer_headers,
+        )
+        self.assertEqual(reclaim.status_code, 201)
+        self.assertEqual(reclaim.json()["data"]["account"]["status"], "CLAIM_PENDING")
+        self.assertTrue(reclaim.json()["data"]["approval"]["requires_checker"])
+        self.assertEqual(
+            reclaim.json()["data"]["approval"]["package"]["external_kyc_entitlement_verification"],
+            "REQUIRED_BEFORE_PAYOUT",
+        )
 
 
 if __name__ == "__main__":

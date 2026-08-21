@@ -158,13 +158,14 @@ ACTIVE
 ### Scheduled lifecycle
 
 1. Compliance/API/automation supplies an account's jurisdiction, balance, last customer activity, and as-of date.
-2. `DormancyAgent` compares inactivity to the configured jurisdiction clock.
-3. Within the outreach lead window it records re-engagement and moves the account to `OUTREACH`.
-4. At the dormancy threshold it marks `DORMANT` and calculates `transfer_due_on`.
-5. When due, it creates an `UNCLAIMED_TRANSFER` package and moves to `TRANSFER_PENDING`.
-6. A `compliance.officer` decision is required.
-7. The approved local path records transfer state/amount. No external payment, filing, or regulator acknowledgement occurs.
-8. A later claim requires validated entitlement and `claims.officer` approval before local `CLAIM_PAID` state.
+2. `DormancyAgent` compares inactivity to separate dormancy and ten-year unclaimed-deposit clocks in the configured jurisdiction policy.
+3. Within the outreach lead window it records re-engagement across email, SMS, WhatsApp, IVR, app, and letter channels and moves the account to `OUTREACH`. Delivery remains a local simulation.
+4. A customer response is recorded with its channel and can route the account to a V-CIP/KYC reactivation review.
+5. At the dormancy threshold it marks `DORMANT`; `transfer_due_on` remains independently anchored to the last customer activity date.
+6. When the transfer clock is due, it creates an `UNCLAIMED_TRANSFER` package containing principal, interest, local GL-reconciliation state, due date, and DEA package state.
+7. Regulated reactivation, transfer, and reclaim approvals require a maker approval followed by a different authenticated checker.
+8. The approved transfer path records simulated CBS, GL, e-Kuber, and UDGAM acknowledgements plus a regulator reference. It performs no real external filing or money movement.
+9. A later reclaim requires validated identity/entitlement and claims maker-checker approval before the local `CLAIM_PAID` state.
 
 Jurisdiction differences and effective-date changes must be represented as compliance-approved, versioned policy. The included `IN-RBI-DEA` configuration is illustrative and must not be treated as legal advice or a current filing rule.
 
@@ -173,8 +174,9 @@ Jurisdiction differences and effective-date changes must be represented as compl
 1. The authenticated customer lists only accounts matching their `customer_id`.
 2. The customer selects an account and confirms current KYC.
 3. The API rejects another customer's account as `404` and rejects `kyc_confirmed=false` as `422`.
-4. A valid request creates `ACCOUNT_REACTIVATION` for `compliance.officer` and appends an audit event.
-5. Compliance approval moves the local account to `ACTIVE`, clears dormancy/transfer dates, refreshes last activity, and rejects any pending transfer package. Approved KYC/core-banking execution remains a production integration.
+4. A valid request records the selected KYC route and creates `ACCOUNT_REACTIVATION` for `compliance.officer`.
+5. The first approval records the maker and changes the request to `MAKER_APPROVED`; a different authenticated user must perform the checker decision.
+6. Checker approval moves the local account to `ACTIVE`, records a simulated CBS update, clears dormancy/transfer dates, refreshes last activity, and rejects any pending transfer package. Approved KYC/core-banking execution remains a production integration.
 
 ## 8. Automation cycle
 

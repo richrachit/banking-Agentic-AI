@@ -245,6 +245,8 @@ Run tests as a module from the project root. Directly running `python tests\test
 
 ## Documentation
 
+- [Technology stack](docs/TECH_STACK.md)
+- [Deployment plan](docs/DEPLOYMENT_PLAN.md)
 - [API reference](docs/API.md)
 - [OpenAPI 3.1 snapshot](docs/openapi.json)
 - [Workflow reference](docs/WORKFLOWS.md)

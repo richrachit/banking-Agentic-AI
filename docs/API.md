@@ -122,6 +122,8 @@ All paths below are relative to `/api/v1`.
 | `POST /approvals/{approval_id}/decision` | Bearer | `CREDIT`, `COMPLIANCE`, `ADMIN` | Approves/rejects only when the actor has the required authority |
 | `GET /accounts` | Bearer | `CUSTOMER`, `COMPLIANCE`, `ADMIN` | Customer-owned or role-wide account list |
 | `POST /accounts/{account_id}/reactivation-requests` | Bearer | `CUSTOMER` | Creates a compliance approval after current-KYC confirmation |
+| `POST /accounts/{account_id}/outreach-responses` | Bearer | `CUSTOMER` | Records an owned account's outreach response and optional KYC/V-CIP route |
+| `POST /accounts/{account_id}/reclaims` | Bearer | `CUSTOMER` | Matches authenticated local ownership and creates a maker-checker reclaim; approved KYC/entitlement verification remains required before real payout |
 | `POST /dormancy/cycles` | Bearer | `COMPLIANCE`, `ADMIN` | Saves the supplied account facts and evaluates its lifecycle at an as-of date |
 | `POST /automation/cycles` | Bearer | `LOAN`, `COMPLIANCE`, `ADMIN` | Runs the bounded loan/dormancy supervisor cycle |
 | `POST /chat/messages` | Bearer | Any authenticated role | Returns a role-scoped, read-only support-assistant response; never executes a banking action |
@@ -265,7 +267,7 @@ The `document_type` must be in the API's supported allowlist. The adapter checks
 }
 ```
 
-`decision` accepts only `APPROVED` or `REJECTED`; a rejection requires a non-empty note and an already-decided approval returns `409`. Credit actors can decide `credit.manager` cases; compliance actors can decide `compliance.officer` cases. The endpoint applies the matching follow-on transition: credit review/reconsideration continues or rejects the loan, loan-deviation approval/rejection updates it, reactivation approval restores the local account to `ACTIVE`, and approved transfer/claim cases invoke their local execution paths. Loan disbursement is not implemented.
+`decision` accepts only `APPROVED` or `REJECTED`; a rejection requires a non-empty note and an already-decided approval returns `409`. Credit actors can decide `credit.manager` cases; compliance actors can decide `compliance.officer` and `claims.officer` cases. Regulated reactivation, transfer, and reclaim approvals require two decisions: the first approval records `maker_by` and changes the status to `MAKER_APPROVED`; a different authenticated user must submit the checker decision. The endpoint then applies the matching transition. Loan disbursement and real CBS/GL/e-Kuber/UDGAM execution are not implemented.
 
 The response contains `approval`, nullable `updatedEntity`, `executedTransfers`, and `executedClaims`, allowing a client to refresh the affected workflow without guessing which follow-on action occurred.
 
@@ -279,7 +281,7 @@ Customer reactivation:
 }
 ```
 
-This is accepted only for the customer's `OUTREACH`, `DORMANT`, or `TRANSFER_PENDING` account and creates `ACCOUNT_REACTIVATION` for `compliance.officer`. Approval restores the local account to `ACTIVE`, clears dormancy/transfer dates, refreshes its last-activity date, and cancels a pending transfer approval. A real KYC/core-banking reactivation is still an external integration.
+This is accepted only for the customer's `OUTREACH`, `DORMANT`, or `TRANSFER_PENDING` account and creates `ACCOUNT_REACTIVATION` for `compliance.officer`. The request also records a `V_CIP`, `BRANCH_KYC`, or `DIGITAL_KYC` route. Maker-checker approval restores the local account to `ACTIVE`, clears dormancy/transfer dates, refreshes its last-activity date, records a simulated CBS status, and cancels a pending transfer approval. A real KYC/core-banking reactivation is still an external integration.
 
 Compliance lifecycle run:
 
