@@ -1,0 +1,14 @@
+{
+  "outreach_lead_days": 30,
+  "outreach_channels": ["EMAIL", "SMS", "WHATSAPP", "IVR", "APP", "LETTER"],
+  "jurisdictions": {
+    "IN-RBI-DEA": {
+      "dormancy_days": 730,
+      "transfer_wait_days": 2920,
+      "annual_interest_rate": 0.0,
+      "deadline_alert_days": [90, 30, 7, 1],
+      "filing_types": ["DEA_REMITTANCE", "UDGAM_PUBLICATION"]
+    }
+  },
+  "notice": "Illustrative local configuration only. Compliance must approve effective dates, thresholds, interest treatment, and filing schemas before production use."
+}

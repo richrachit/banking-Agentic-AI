@@ -6,7 +6,7 @@ This module connects account lifecycle processing, approval creation, and the
 persisted case database for dormant-account reviews.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 
 from .audit import AuditLog
@@ -29,6 +29,9 @@ class DormancyAgent:
         return processed
 
     def _process(self, account: Account, as_of: date) -> Account:
+        if account.automation_paused:
+            self.audit.write("dormancy-agent", "account.automation_skipped", account.account_id, "PAUSED", {"reason": account.pause_reason})
+            return account
         dormancy_days = self.policy.dormancy_days_by_jurisdiction[account.jurisdiction]
         transfer_wait_days = self.policy.transfer_wait_days_by_jurisdiction[account.jurisdiction]
         inactive_days = (as_of - parse_date(account.last_customer_activity)).days
@@ -55,7 +58,9 @@ class DormancyAgent:
         if account.status == DormancyStatus.DORMANT.value and as_of >= parse_date(account.transfer_due_on or as_of.isoformat()):
             account.transfer_package_prepared_on = as_of.isoformat()
             account.transfer_principal = account.balance
-            account.transfer_interest = 0.0
+            rate = self.policy.annual_interest_rate_by_jurisdiction.get(account.jurisdiction, 0.0)
+            interest_days = max(0, (as_of - parse_date(account.dormant_on or as_of.isoformat())).days)
+            account.transfer_interest = round(account.transfer_principal * rate * interest_days / 365, 2)
             account.gl_reconciliation_status = "PACKAGE_RECONCILED_LOCAL_DEMO"
             approval = self.repository.create_approval(Approval(
                 approval_id=f"APR-{len(self.repository.list_approvals()) + 1:04d}", kind="UNCLAIMED_TRANSFER", entity_id=account.account_id,
@@ -68,6 +73,9 @@ class DormancyAgent:
                     "due_on": account.transfer_due_on,
                     "gl_reconciliation": account.gl_reconciliation_status,
                     "dea_package": "ASSEMBLED_LOCAL_DEMO",
+                    "annual_interest_rate": rate,
+                    "interest_days": interest_days,
+                    "filing_types": list(self.policy.filing_types_by_jurisdiction.get(account.jurisdiction, ())),
                 },
                 requires_checker=True,
             ))
@@ -147,6 +155,62 @@ class DormancyAgent:
             {"channel": normalized_channel, "reactivation_requested": request_reactivation},
         )
         return account
+
+    def set_automation_pause(self, account_id: str, paused: bool, actor: str, reason: str) -> Account:
+        account = self.repository.get_account(account_id)
+        account.automation_paused = paused
+        account.pause_reason = reason if paused else None
+        account.paused_by = actor if paused else None
+        account.paused_on = datetime.now(timezone.utc).isoformat() if paused else None
+        self.repository.save_account(account)
+        self.audit.write(actor, "account.automation_paused" if paused else "account.automation_resumed", account_id, "SUCCESS", {"reason": reason})
+        return account
+
+    def deadline_alerts(self, as_of: date, within_days: int = 90) -> list[dict[str, object]]:
+        alerts: list[dict[str, object]] = []
+        for account in self.repository.list_accounts():
+            if account.automation_paused or not account.transfer_due_on or account.status in {DormancyStatus.TRANSFERRED.value, DormancyStatus.CLAIM_PAID.value}:
+                continue
+            days_remaining = (parse_date(account.transfer_due_on) - as_of).days
+            configured_offsets = self.policy.deadline_alert_days_by_jurisdiction.get(account.jurisdiction, ())
+            configured_horizon = max(configured_offsets, default=within_days)
+            if days_remaining <= min(within_days, configured_horizon):
+                alerts.append({
+                    "account_id": account.account_id,
+                    "jurisdiction": account.jurisdiction,
+                    "status": account.status,
+                    "transfer_due_on": account.transfer_due_on,
+                    "days_remaining": days_remaining,
+                    "severity": "OVERDUE" if days_remaining < 0 else "DUE_TODAY" if days_remaining == 0 else "UPCOMING",
+                    "configured_alert_offsets": list(configured_offsets),
+                })
+        return sorted(alerts, key=lambda item: (item["days_remaining"], item["account_id"]))
+
+    def regulatory_export(self, account_id: str) -> dict[str, object]:
+        account = self.repository.get_account(account_id)
+        approvals = [item for item in self.repository.list_approvals() if item.entity_id == account_id]
+        return {
+            "schema_version": "DORMANCY_REGULATORY_EXPORT_V1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "simulation": True,
+            "account": {
+                "account_id": account.account_id,
+                "jurisdiction": account.jurisdiction,
+                "status": account.status,
+                "dormant_on": account.dormant_on,
+                "transfer_due_on": account.transfer_due_on,
+                "principal": account.transfer_principal,
+                "interest": account.transfer_interest,
+                "transferred_amount": account.transferred_amount,
+                "gl_reconciliation_status": account.gl_reconciliation_status,
+                "cbs_status": account.cbs_status,
+                "ekuber_status": account.ekuber_status,
+                "udgam_status": account.udgam_status,
+                "regulator_reference": account.regulator_reference,
+            },
+            "approvals": [{"approval_id": item.approval_id, "kind": item.kind, "status": item.status, "maker_by": item.maker_by, "checker_by": item.checker_by} for item in approvals],
+            "filing_types": list(self.policy.filing_types_by_jurisdiction.get(account.jurisdiction, ())),
+        }
 
     def request_claim(self, account_id: str, claim_id: str, ownership_matched: bool) -> Account:
         """Queue a local reclaim after authenticated ownership matching.

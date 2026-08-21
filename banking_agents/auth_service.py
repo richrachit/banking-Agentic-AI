@@ -13,8 +13,7 @@ from .user_registry import UserRegistry
 # rendered by the application. Production must use the bank IdP, MFA, and RBAC.
 LOCAL_DEMO_USERS = {
     "customer": ("customer123", "CUSTOMER", "Customer"),
-    "loan.ops": ("ops123", "LOAN", "Loan Operations"),
-    "credit.manager": ("credit123", "CREDIT", "Credit Manager"),
+    "underwriter": ("underwriter123", "UNDERWRITER", "Credit Underwriter"),
     "compliance.officer": ("compliance123", "COMPLIANCE", "Compliance Officer"),
     "admin": ("admin123", "ADMIN", "Administrator"),
 }

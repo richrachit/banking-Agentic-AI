@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+import json
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -13,6 +14,24 @@ from banking_agents.repository import LocalRepository
 
 
 class DormancyDatabaseTests(unittest.TestCase):
+    def test_rule_pack_file_adds_jurisdiction_without_code_change(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "rules.json"
+            path.write_text(json.dumps({
+                "outreach_channels": ["EMAIL", "SMS"],
+                "jurisdictions": {"TEST-REGIME": {
+                    "dormancy_days": 100,
+                    "transfer_wait_days": 200,
+                    "annual_interest_rate": 0.05,
+                    "deadline_alert_days": [30, 7],
+                    "filing_types": ["TEST_REPORT"]
+                }}
+            }), encoding="utf-8")
+            policy = PolicyConfig.from_rule_pack_file(path)
+            self.assertEqual(policy.dormancy_days_by_jurisdiction["TEST-REGIME"], 100)
+            self.assertEqual(policy.annual_interest_rate_by_jurisdiction["TEST-REGIME"], 0.05)
+            self.assertEqual(policy.filing_types_by_jurisdiction["TEST-REGIME"], ("TEST_REPORT",))
+
     def test_incentive_calculator_applies_expected_caps(self):
         calculator = DormancyIncentiveCalculator()
         short_term = calculator.calculate_incentive(balance=100000.0, idle_days=365 * 3)

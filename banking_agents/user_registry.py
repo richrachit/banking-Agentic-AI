@@ -17,8 +17,7 @@ import re
 class UserRegistry:
     reserved_local_usernames = {
         "customer",
-        "loan.ops",
-        "credit.manager",
+        "underwriter",
         "compliance.officer",
         "admin",
     }
@@ -49,7 +48,7 @@ class UserRegistry:
             raise ValueError("Display name must contain 1-100 characters.")
         if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             raise ValueError("Enter a valid email address.")
-        if role not in {"CUSTOMER", "LOAN", "CREDIT", "COMPLIANCE"}:
+        if role not in {"CUSTOMER", "UNDERWRITER", "COMPLIANCE"}:
             raise ValueError("Unsupported signup role.")
         salt = os.urandom(16)
         digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 310_000)
