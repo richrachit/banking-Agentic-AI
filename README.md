@@ -22,7 +22,7 @@ python -m venv .venv
 - API docs: `http://127.0.0.1:8001/docs`
 - Health: `http://127.0.0.1:8001/api/v1/health`
 
-Local demo users: `customer/customer123`, `underwriter/underwriter123`, `compliance.officer/compliance123`, and `admin/admin123`. Never use these credentials in production.
+The local UI and API do not require login. Access control and identity verification must be supplied by the deployment boundary before production use.
 
 ## Safety boundary
 

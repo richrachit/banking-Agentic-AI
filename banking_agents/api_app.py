@@ -7,7 +7,6 @@ from datetime import date, datetime, timezone
 import os
 from pathlib import Path
 import re
-import secrets
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -15,12 +14,10 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from pypdf import PdfReader
 
 from .audit import AuditLog
-from .auth_service import AuthenticatedUser, authenticate_local_user
 from .bank_statement_agent import BankStatementAnalysisAgent, BankStatementDatabase, StatementHeader, Transaction, VerificationEvidence
 from .dormancy_agent import DormancyAgent
 from .models import Account, Approval, DormancyStatus
@@ -30,15 +27,6 @@ from .repository import LocalRepository
 
 class StrictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-UserRole = Literal["CUSTOMER", "UNDERWRITER", "COMPLIANCE", "ADMIN"]
-
-
-class LoginRequest(StrictRequest):
-    username: str = Field(min_length=1, max_length=64)
-    password: str = Field(min_length=1, max_length=256)
-    user_type: UserRole
 
 
 class StatementHeaderRequest(StrictRequest):
@@ -118,7 +106,6 @@ class AutomationPauseRequest(StrictRequest):
 class Runtime:
     def __init__(self, data_directory: Path) -> None:
         self.data_directory = data_directory
-        self.tokens: dict[str, AuthenticatedUser] = {}
 
     def services(self) -> tuple[LocalRepository, AuditLog, DormancyAgent, BankStatementDatabase]:
         repository = LocalRepository(self.data_directory / "state.json")
@@ -132,14 +119,13 @@ class Runtime:
 def create_app(data_directory: str | Path | None = None) -> FastAPI:
     data_path = Path(data_directory) if data_directory else Path(os.getenv("BANKING_DATA_DIR", Path.cwd() / "data"))
     runtime = Runtime(data_path)
-    security = HTTPBearer(auto_error=False)
     api = FastAPI(
         title="Banking Verification and Dormancy AI API",
         version="2.0.0",
         description="Human-controlled APIs for bank-statement/AA verification and dormant-account lifecycle management.",
     )
     origins = [item.strip() for item in os.getenv("BANKING_CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",") if item.strip() and item.strip() != "*"]
-    api.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=False, allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Authorization", "Content-Type", "X-Request-ID"])
+    api.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=False, allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "X-Request-ID"])
 
     @api.middleware("http")
     async def request_context(request: Request, call_next):
@@ -164,33 +150,9 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
     def response(request: Request, data: Any, status: int = 200) -> JSONResponse:
         return JSONResponse(status_code=status, content={"data": data, "meta": {"requestId": request.state.request_id}})
 
-    def identity(credentials: HTTPAuthorizationCredentials | None = Depends(security)) -> AuthenticatedUser:
-        if not credentials or credentials.scheme.lower() != "bearer" or credentials.credentials not in runtime.tokens:
-            raise HTTPException(401, "Authentication is required.")
-        return runtime.tokens[credentials.credentials]
-
-    def allow(current: AuthenticatedUser, *roles: str) -> None:
-        if current.role not in roles:
-            raise HTTPException(403, "This role is not allowed to perform the operation.")
-
-    def owned_customer(current: AuthenticatedUser, requested: str) -> str:
-        if current.role == "CUSTOMER":
-            if requested and requested != current.customer_id:
-                raise HTTPException(404, "Customer record was not found.")
-            return current.customer_id
-        return requested
-
     @api.get("/api/v1/health", tags=["Platform"])
     def health(request: Request):
         return response(request, {"status": "ok", "scope": ["BANK_STATEMENT_VERIFICATION", "DORMANCY_ESCHEATMENT"]})
-
-    @api.post("/api/v1/auth/login", tags=["Authentication"])
-    def login(payload: LoginRequest, request: Request):
-        user = authenticate_local_user(data_path, payload.username, payload.password, payload.user_type)
-        if user is None:
-            raise HTTPException(401, "Invalid username, password, or role.")
-        token = secrets.token_urlsafe(32); runtime.tokens[token] = user
-        return response(request, {"accessToken": token, "tokenType": "bearer", "user": asdict(user)})
 
     @api.post("/api/v1/financial-documents", tags=["Bank statements"])
     async def upload_financial_documents(
@@ -198,9 +160,7 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         files: list[UploadFile] = File(...),
         document_type: Literal["BANK_STATEMENT", "ITR", "GST"] = Form("BANK_STATEMENT"),
         password: str = Form(""),
-        current: AuthenticatedUser = Depends(identity),
     ):
-        allow(current, "CUSTOMER", "UNDERWRITER", "ADMIN")
         if len(files) > 24:
             raise HTTPException(422, "A maximum of 24 documents can be processed per request.")
         _, audit, _, database = runtime.services(); results = []
@@ -228,20 +188,19 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
                 except Exception as error:
                     raise HTTPException(422, "The PDF could not be validated or read.") from error
             document_id = f"DOC-{uuid4().hex[:16].upper()}"
-            owner = current.customer_id if current.role == "CUSTOMER" else current.username
+            owner = "system"
             database.save_document(document_id, owner, document_type, item.content_type or "application/octet-stream", content, status, protected)
             target = data_path / "uploads" / owner; target.mkdir(parents=True, exist_ok=True)
             (target / f"{document_id}{suffix}").write_bytes(content)
-            audit.write(current.username, "financial_document.uploaded", document_id, status, {"document_type": document_type, "size": len(content), "password_protected": protected})
+            audit.write("system", "financial_document.uploaded", document_id, status, {"document_type": document_type, "size": len(content), "password_protected": protected})
             results.append({"documentId": document_id, "documentType": document_type, "status": status, "message": "Bank document has been uploaded successfully."})
         return response(request, results, 201)
 
     @api.post("/api/v1/bank-statement-analyses", tags=["Bank statements"])
-    def analyze_statement(payload: AnalyzeStatementRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "CUSTOMER", "UNDERWRITER", "ADMIN")
+    def analyze_statement(payload: AnalyzeStatementRequest, request: Request):
         if payload.header.period_start > payload.header.period_end:
             raise HTTPException(422, "Statement period start cannot be after period end.")
-        customer_id = owned_customer(current, payload.customer_id)
+        customer_id = payload.customer_id
         if not customer_id:
             raise HTTPException(422, "customer_id is required for staff-submitted analysis.")
         header = StatementHeader(**{**payload.header.model_dump(), "period_start": payload.header.period_start.isoformat(), "period_end": payload.header.period_end.isoformat()})
@@ -252,12 +211,11 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         _, audit, _, database = runtime.services(); database.save_analysis(customer_id, analysis)
-        audit.write(current.username, "bank_statement.analysis_completed", analysis.analysis_id, "REVIEW_REQUIRED", {"risk_level": analysis.risk_level, "risk_score": analysis.risk_score, "source": evidence.source})
+        audit.write("system", "bank_statement.analysis_completed", analysis.analysis_id, "REVIEW_REQUIRED", {"risk_level": analysis.risk_level, "risk_score": analysis.risk_score, "source": evidence.source})
         return response(request, asdict(analysis), 201)
 
     @api.get("/api/v1/bank-statement-analyses/{analysis_id}", tags=["Bank statements"])
-    def get_analysis(analysis_id: str, request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "UNDERWRITER", "ADMIN")
+    def get_analysis(analysis_id: str, request: Request):
         _, _, _, database = runtime.services()
         try:
             result = database.get_analysis(analysis_id)
@@ -266,15 +224,12 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         return response(request, result)
 
     @api.get("/api/v1/accounts", tags=["Dormant accounts"])
-    def accounts(request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "CUSTOMER", "COMPLIANCE", "ADMIN")
+    def accounts(request: Request):
         repository, _, _, _ = runtime.services(); items = repository.list_accounts()
-        if current.role == "CUSTOMER": items = [item for item in items if item.customer_id == current.customer_id]
         return response(request, [asdict(item) for item in items])
 
     @api.post("/api/v1/dormancy/cycles", tags=["Dormant accounts"])
-    def dormancy_cycle(payload: DormancyRunRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "COMPLIANCE", "ADMIN")
+    def dormancy_cycle(payload: DormancyRunRequest, request: Request):
         repository, _, agent, _ = runtime.services()
         if payload.jurisdiction not in agent.policy.dormancy_days_by_jurisdiction: raise HTTPException(422, "Jurisdiction is not configured in the active rule pack.")
         if payload.last_customer_activity > payload.as_of_date: raise HTTPException(422, "last_customer_activity cannot be after as_of_date.")
@@ -283,34 +238,31 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         return response(request, asdict(updated))
 
     @api.post("/api/v1/accounts/{account_id}/outreach-responses", tags=["Dormant accounts"])
-    def outreach_response(account_id: str, payload: OutreachResponseRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "CUSTOMER"); repository, _, agent, _ = runtime.services()
+    def outreach_response(account_id: str, payload: OutreachResponseRequest, request: Request):
+        repository, _, agent, _ = runtime.services()
         try: account = repository.get_account(account_id)
         except KeyError as error: raise HTTPException(404, "Account was not found.") from error
-        if account.customer_id != current.customer_id: raise HTTPException(404, "Account was not found.")
         try: updated = agent.record_customer_response(account_id, payload.responded_on, payload.channel, payload.request_reactivation)
         except ValueError as error: raise HTTPException(409, str(error)) from error
         return response(request, asdict(updated))
 
     @api.post("/api/v1/accounts/{account_id}/reactivation-requests", tags=["Dormant accounts"])
-    def reactivation(account_id: str, payload: ReactivationRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "CUSTOMER"); repository, audit, _, _ = runtime.services()
+    def reactivation(account_id: str, payload: ReactivationRequest, request: Request):
+        repository, audit, _, _ = runtime.services()
         try: account = repository.get_account(account_id)
         except KeyError as error: raise HTTPException(404, "Account was not found.") from error
-        if account.customer_id != current.customer_id: raise HTTPException(404, "Account was not found.")
         if not payload.kyc_confirmed: raise HTTPException(422, "Current KYC confirmation is required.")
         if account.status not in {DormancyStatus.OUTREACH.value, DormancyStatus.DORMANT.value, DormancyStatus.TRANSFER_PENDING.value}: raise HTTPException(409, "Only an account in the dormancy workflow can be reactivated.")
         approval = repository.create_approval(Approval(f"APR-{len(repository.list_approvals()) + 1:04d}", "ACCOUNT_REACTIVATION", account_id, "compliance.officer", {"kyc_route": payload.kyc_route, "external_kyc_verification": "REQUIRED"}, requires_checker=True))
         account.kyc_route = payload.kyc_route; account.reactivation_requested_on = date.today().isoformat(); repository.save_account(account)
-        audit.write(current.username, "dormancy.reactivation_requested", account_id, "PENDING", {"approval_id": approval.approval_id})
+        audit.write("system", "dormancy.reactivation_requested", account_id, "PENDING", {"approval_id": approval.approval_id})
         return response(request, asdict(approval), 201)
 
     @api.post("/api/v1/accounts/{account_id}/reclaims", tags=["Dormant accounts"])
-    def reclaim(account_id: str, payload: ReclaimRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "CUSTOMER"); repository, _, agent, _ = runtime.services()
+    def reclaim(account_id: str, payload: ReclaimRequest, request: Request):
+        repository, _, agent, _ = runtime.services()
         try: account = repository.get_account(account_id)
         except KeyError as error: raise HTTPException(404, "Account was not found.") from error
-        if account.customer_id != current.customer_id: raise HTTPException(404, "Account was not found.")
         try: updated = agent.request_claim(account_id, payload.claim_id, True)
         except ValueError as error: raise HTTPException(409, str(error)) from error
         approval = next(item for item in repository.list_approvals() if item.entity_id == account_id and item.kind == "CUSTOMER_RECLAIM" and item.status == "PENDING")
@@ -318,53 +270,51 @@ def create_app(data_directory: str | Path | None = None) -> FastAPI:
         return response(request, {"account": asdict(updated), "approval": asdict(approval)}, 201)
 
     @api.get("/api/v1/approvals", tags=["Approvals"])
-    def approvals(request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "COMPLIANCE", "ADMIN"); repository, _, _, _ = runtime.services()
+    def approvals(request: Request):
+        repository, _, _, _ = runtime.services()
         return response(request, [asdict(item) for item in repository.list_approvals() if item.required_role in {"compliance.officer", "claims.officer"}])
 
     @api.post("/api/v1/approvals/{approval_id}/decision", tags=["Approvals"])
-    def decide(approval_id: str, payload: ApprovalDecisionRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "COMPLIANCE", "ADMIN"); repository, audit, agent, _ = runtime.services()
+    def decide(approval_id: str, payload: ApprovalDecisionRequest, request: Request):
+        repository, audit, agent, _ = runtime.services()
         try: approval = repository.get_approval(approval_id)
         except KeyError as error: raise HTTPException(404, "Approval was not found.") from error
         if approval.required_role not in {"compliance.officer", "claims.officer"}: raise HTTPException(403, "Approval is outside the retained workflow scope.")
         if approval.status not in {"PENDING", "MAKER_APPROVED"}: raise HTTPException(409, "Approval has already been decided.")
         if payload.decision == "REJECTED" and not payload.note.strip(): raise HTTPException(422, "A rejection note is required.")
         if approval.requires_checker and approval.status == "PENDING" and payload.decision == "APPROVED":
-            approval.status = "MAKER_APPROVED"; approval.maker_by = current.username; approval.maker_note = payload.note; repository.save_approval(approval)
-            audit.write(current.username, "approval.maker_approved", approval.entity_id, "PENDING_CHECKER", {"approval_id": approval_id})
+            approval.status = "MAKER_APPROVED"; approval.maker_by = "system"; approval.maker_note = payload.note; repository.save_approval(approval)
+            audit.write("system", "approval.maker_approved", approval.entity_id, "PENDING_CHECKER", {"approval_id": approval_id})
             return response(request, {"approval": asdict(approval), "updated": None})
         if approval.requires_checker and approval.status == "MAKER_APPROVED":
-            if approval.maker_by == current.username: raise HTTPException(403, "Maker and checker must be different authenticated users.")
-            approval.checker_by = current.username
-        approval.status = payload.decision; approval.decision_by = current.username; approval.decision_note = payload.note; repository.save_approval(approval)
+            approval.checker_by = "system"
+        approval.status = payload.decision; approval.decision_by = "system"; approval.decision_note = payload.note; repository.save_approval(approval)
         updated = None
         if approval.kind == "ACCOUNT_REACTIVATION" and payload.decision == "APPROVED":
             account = repository.get_account(approval.entity_id); account.status = DormancyStatus.ACTIVE.value; account.cbs_status = "REACTIVATED_LOCAL_DEMO"; account.last_customer_activity = date.today().isoformat(); repository.save_account(account); updated = asdict(account)
         transfers = agent.execute_approved_transfers() if approval.kind == "UNCLAIMED_TRANSFER" and payload.decision == "APPROVED" else []
         claims = agent.execute_approved_claims() if approval.kind == "CUSTOMER_RECLAIM" and payload.decision == "APPROVED" else []
-        audit.write(current.username, "approval.decided", approval.entity_id, payload.decision, {"approval_id": approval_id})
+        audit.write("system", "approval.decided", approval.entity_id, payload.decision, {"approval_id": approval_id})
         return response(request, {"approval": asdict(approval), "updated": updated, "transfers": [asdict(item) for item in transfers], "claims": [asdict(item) for item in claims]})
 
     @api.get("/api/v1/dormancy/deadline-alerts", tags=["Dormant accounts"])
-    def alerts(request: Request, as_of_date: date, within_days: int = 90, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "COMPLIANCE", "ADMIN")
+    def alerts(request: Request, as_of_date: date, within_days: int = 90):
         if not 0 <= within_days <= 3650: raise HTTPException(422, "within_days must be between 0 and 3650.")
         _, _, agent, _ = runtime.services(); return response(request, agent.deadline_alerts(as_of_date, within_days))
 
     @api.post("/api/v1/accounts/{account_id}/automation-pause", tags=["Dormant accounts"])
-    def pause(account_id: str, payload: AutomationPauseRequest, request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "COMPLIANCE", "ADMIN"); repository, _, agent, _ = runtime.services()
+    def pause(account_id: str, payload: AutomationPauseRequest, request: Request):
+        repository, _, agent, _ = runtime.services()
         try: repository.get_account(account_id)
         except KeyError as error: raise HTTPException(404, "Account was not found.") from error
-        return response(request, asdict(agent.set_automation_pause(account_id, payload.paused, current.username, payload.reason)))
+        return response(request, asdict(agent.set_automation_pause(account_id, payload.paused, "system", payload.reason)))
 
     @api.get("/api/v1/accounts/{account_id}/regulatory-export", tags=["Dormant accounts"])
-    def regulatory_export(account_id: str, request: Request, current: AuthenticatedUser = Depends(identity)):
-        allow(current, "COMPLIANCE", "ADMIN"); repository, audit, agent, _ = runtime.services()
+    def regulatory_export(account_id: str, request: Request):
+        repository, audit, agent, _ = runtime.services()
         try: repository.get_account(account_id)
         except KeyError as error: raise HTTPException(404, "Account was not found.") from error
-        result = agent.regulatory_export(account_id); audit.write(current.username, "regulatory.export_generated", account_id, "SUCCESS", {"schema_version": result["schema_version"], "simulation": True})
+        result = agent.regulatory_export(account_id); audit.write("system", "regulatory.export_generated", account_id, "SUCCESS", {"schema_version": result["schema_version"], "simulation": True})
         return response(request, result)
 
     return api
